@@ -19,17 +19,7 @@ plugins:
 
 Restart Hermes Agent to activate.
 
-## Configuration
-
-No additional config needed. The plugin reads your existing LLM settings from `config.yaml`:
-
-```yaml
-model:
-  default: your-model-name      # e.g. mimo-v2.5-pro
-  provider: your-provider       # e.g. xiaomi, openrouter, openai
-```
-
-The plugin uses the same model/provider you already configured for Hermes. If the LLM is unavailable (auth error, timeout), it gracefully falls back to default analysis (quality=2, basic metadata).
+The plugin uses whatever LLM you already configured in Hermes (`model.default` / `model.provider` in config.yaml). No extra LLM config needed.
 
 ## How It Works
 
