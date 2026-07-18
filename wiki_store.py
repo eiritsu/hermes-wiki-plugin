@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _WIKI_SCHEMA = """
-CREATE TABLE IF NOT EXISTS wiki_pages (
+CREATE TABLE IF NOT EXISTS hermes_wiki_pages (
     page_id        INTEGER PRIMARY KEY AUTOINCREMENT,
     page_type      TEXT NOT NULL,
     slug           TEXT UNIQUE NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
     updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS wiki_pending_queue (
+CREATE TABLE IF NOT EXISTS hermes_wiki_pending_queue (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id     TEXT NOT NULL,
     title          TEXT,
@@ -49,9 +49,9 @@ CREATE TABLE IF NOT EXISTS wiki_pending_queue (
     status         TEXT DEFAULT 'pending'
 );
 
-CREATE INDEX IF NOT EXISTS idx_wiki_queue_status ON wiki_pending_queue(status);
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_type ON wiki_pages(page_type);
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_date ON wiki_pages(date);
+CREATE INDEX IF NOT EXISTS idx_hermes_wiki_queue_status ON hermes_wiki_pending_queue(status);
+CREATE INDEX IF NOT EXISTS idx_hermes_hermes_wiki_pages_type ON hermes_wiki_pages(page_type);
+CREATE INDEX IF NOT EXISTS idx_hermes_hermes_wiki_pages_date ON hermes_wiki_pages(date);
 """
 
 
@@ -129,7 +129,7 @@ class WikiStore:
         messages_json = json.dumps(messages, ensure_ascii=False)
         with self._lock:
             cur = self._conn.execute(
-                """INSERT INTO wiki_pending_queue
+                """INSERT INTO hermes_wiki_pending_queue
                    (session_id, title, source, message_count, messages_json, status)
                    VALUES (?, ?, ?, ?, ?, 'pending')""",
                 (session_id, title, source, len(messages), messages_json),
@@ -141,7 +141,7 @@ class WikiStore:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT id, session_id, title, source, message_count, messages_json
-                   FROM wiki_pending_queue WHERE status = 'pending'
+                   FROM hermes_wiki_pending_queue WHERE status = 'pending'
                    ORDER BY enqueued_at ASC LIMIT ?""",
                 (limit,),
             ).fetchall()
@@ -150,7 +150,7 @@ class WikiStore:
             ids = [dict(r)["id"] for r in rows]
             placeholders = ",".join("?" * len(ids))
             self._conn.execute(
-                f"UPDATE wiki_pending_queue SET status = 'processing' WHERE id IN ({placeholders})",
+                f"UPDATE hermes_wiki_pending_queue SET status = 'processing' WHERE id IN ({placeholders})",
                 ids,
             )
             self._conn.commit()
@@ -164,13 +164,13 @@ class WikiStore:
     def mark_done(self, queue_id: int, status: str = "done") -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE wiki_pending_queue SET status = ? WHERE id = ?", (status, queue_id)
+                "UPDATE hermes_wiki_pending_queue SET status = ? WHERE id = ?", (status, queue_id)
             )
             self._conn.commit()
 
     def pending_count(self) -> int:
         row = self._conn.execute(
-            "SELECT COUNT(*) FROM wiki_pending_queue WHERE status = 'pending'"
+            "SELECT COUNT(*) FROM hermes_wiki_pending_queue WHERE status = 'pending'"
         ).fetchone()
         return row[0] if row else 0
 
@@ -178,7 +178,7 @@ class WikiStore:
         if not session_id:
             return False
         row = self._conn.execute(
-            "SELECT 1 FROM wiki_pages WHERE source_session_id = ?", (session_id,)
+            "SELECT 1 FROM hermes_wiki_pages WHERE source_session_id = ?", (session_id,)
         ).fetchone()
         return row is not None
 
@@ -187,7 +187,7 @@ class WikiStore:
     def insert_page(self, **kwargs) -> int:
         with self._lock:
             cur = self._conn.execute(
-                """INSERT OR REPLACE INTO wiki_pages
+                """INSERT OR REPLACE INTO hermes_wiki_pages
                    (page_type, slug, title, date, language, quality, content_type,
                     topics, keywords, entities, summary, full_content, source_session_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -213,14 +213,14 @@ class WikiStore:
     def get_topic_page(self, slug: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM wiki_pages WHERE slug = ? AND page_type = 'topic'", (slug,)
+                "SELECT * FROM hermes_wiki_pages WHERE slug = ? AND page_type = 'topic'", (slug,)
             ).fetchone()
             return dict(row) if row else None
 
     def update_page_content(self, page_id: int, content: str) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE wiki_pages SET full_content = ?, updated_at = CURRENT_TIMESTAMP WHERE page_id = ?",
+                "UPDATE hermes_wiki_pages SET full_content = ?, updated_at = CURRENT_TIMESTAMP WHERE page_id = ?",
                 (content, page_id),
             )
             self._conn.commit()
@@ -233,7 +233,7 @@ class WikiStore:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT slug, page_type, title, date, quality, summary, topics
-                   FROM wiki_pages
+                   FROM hermes_wiki_pages
                    WHERE title LIKE ? OR summary LIKE ? OR topics LIKE ? OR keywords LIKE ?
                    LIMIT ?""",
                 (q, q, q, q, limit),
@@ -243,14 +243,14 @@ class WikiStore:
     def get_all_pages(self) -> list:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT slug, page_type, title, date, quality, topics, summary, full_content, source_session_id FROM wiki_pages"
+                "SELECT slug, page_type, title, date, quality, topics, summary, full_content, source_session_id FROM hermes_wiki_pages"
             ).fetchall()
             return [dict(r) for r in rows]
 
     def get_session_ids(self) -> set:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT source_session_id FROM wiki_pages WHERE source_session_id IS NOT NULL"
+                "SELECT source_session_id FROM hermes_wiki_pages WHERE source_session_id IS NOT NULL"
             ).fetchall()
             return {r[0] for r in rows}
 
