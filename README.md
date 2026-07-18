@@ -1,5 +1,7 @@
 # hermes-wiki-plugin
 
+> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+
 Karpathy LLM Wiki pattern for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — automatic session-to-wiki conversion with quality scoring, topic classification, entity extraction, and 7-language i18n.
 
 ## Installation
@@ -122,29 +124,29 @@ Each wiki page includes:
 ---
 session_id: "20260718_143022_abc"
 date: 2026-07-18
-language: zh
+language: en
 quality: 4
 content_type: troubleshooting
-topics: ["nginx", "ssl"]
-entities: ["VPS", "certbot"]
-keywords: ["reverse proxy", "HTTPS"]
-result: "Successfully configured nginx reverse proxy with SSL"
+topics: ["docker", "networking"]
+entities: ["Docker Compose", "Nginx"]
+keywords: ["container", "reverse proxy"]
+result: "Resolved container networking issue and configured reverse proxy"
 ---
 
-# VPS nginx + SSL 配置 (2026-07-18)
+# Docker Networking Debug (2026-07-18)
 
-## 背景
-用户需要在 VPS 上配置 nginx 反向代理和 SSL
+## Background
+Container couldn't reach external APIs due to DNS misconfiguration
 
-## 关键决策
-- 使用 certbot 自动续签
-- 选择 nginx 而非 caddy
+## Key Decisions
+- Used custom bridge network instead of default
+- Added explicit DNS resolver in docker-compose.yml
 
-## 问题与解决
-- 端口 443 被占用 → 杀掉旧进程
+## Problems & Solutions
+- DNS timeout → switched to 8.8.8.8 as fallback resolver
 
-## 结果
-成功配置 nginx + SSL，HTTPS 正常访问
+## Result
+Container networking resolved, reverse proxy configured
 ```
 
 ## Architecture
