@@ -37,7 +37,7 @@ plugins:
             → 提取 facts 到 fact_store
 ```
 
-插件首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`wiki_pages`、`wiki_pending_queue`），无需手动建表。
+插件首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue`），无需手动建表。
 
 ## 触发条件
 

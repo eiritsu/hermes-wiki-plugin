@@ -39,7 +39,7 @@ You chat with Hermes
             → Extracts facts into fact_store
 ```
 
-The plugin auto-creates its SQLite tables (`wiki_pages`, `wiki_pending_queue`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
+The plugin auto-creates its SQLite tables (`hermes_wiki_pages`, `hermes_wiki_pending_queue`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
 
 ## Trigger Conditions
 
