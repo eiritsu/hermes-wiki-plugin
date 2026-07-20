@@ -166,6 +166,14 @@ class WikiBuilder:
     def _call_llm(self, messages: list, title: str, source: str) -> Optional[dict]:
         import httpx
 
+        # Ensure .env is loaded for API key resolution
+        try:
+            from hermes_cli.env_loader import load_hermes_dotenv
+            from hermes_constants import get_hermes_home
+            load_hermes_dotenv(hermes_home=get_hermes_home())
+        except Exception:
+            pass
+
         provider = self._config.get("provider", "")
         model = self._config.get("model", "")
         api_key = self._config.get("api_key", "")
@@ -182,6 +190,8 @@ class WikiBuilder:
                     mc = cfg.get("model", {})
                     model = model or mc.get("default", "") or mc.get("model", "")
                     provider = provider or mc.get("provider", "")
+                    base_url = base_url or mc.get("base_url", "")
+                    api_key = api_key or mc.get("api_key", "")
             except Exception:
                 pass
 
