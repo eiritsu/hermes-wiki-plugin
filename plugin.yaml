@@ -1,8 +1,0 @@
-name: hermes-wiki
-version: 1.0.0
-description: "Karpathy LLM Wiki pattern — automatic session-to-wiki conversion with quality scoring, topic classification, entity extraction, 7-language i18n, and maintenance scheduling. Works standalone or as holographic extension."
-author: community
-type: plugin
-license: MIT
-dependencies:
-  - httpx
