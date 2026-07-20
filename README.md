@@ -12,7 +12,7 @@ cd /tmp/hermes-wiki-plugin
 bash install.sh
 ```
 
-The installer places the backend in `~/.hermes/plugins/hermes_wiki/` and the Desktop GUI plugin in `~/.hermes/desktop-plugins/hermes-wiki/`.
+The installer places the backend in `~/.hermes/plugins/hermes_wiki/` and the Desktop GUI plugin in `~/.hermes/desktop-plugins/wiki/`.
 
 Then edit `~/.hermes/config.yaml` — add `hermes-wiki` to the plugins list:
 

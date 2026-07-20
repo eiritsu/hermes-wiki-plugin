@@ -9,7 +9,7 @@ BACKEND_SRC="$(cd "$(dirname "$0")/backend" && pwd)"
 DESKTOP_SRC="$(cd "$(dirname "$0")/desktop" && pwd)"
 
 BACKEND_DST="$HERMES_HOME/plugins/hermes_wiki"
-DESKTOP_DST="$HERMES_HOME/desktop-plugins/hermes-wiki"
+DESKTOP_DST="$HERMES_HOME/desktop-plugins/wiki"
 
 echo "Installing hermes-wiki plugin..."
 echo ""

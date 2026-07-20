@@ -12,7 +12,7 @@ cd /tmp/hermes-wiki-plugin
 bash install.sh
 ```
 
-安装脚本会将后端安装到 `~/.hermes/plugins/hermes_wiki/`，将 Desktop Wiki GUI 安装到 `~/.hermes/desktop-plugins/hermes-wiki/`。
+安装脚本会将后端安装到 `~/.hermes/plugins/hermes_wiki/`，将 Desktop Wiki GUI 安装到 `~/.hermes/desktop-plugins/wiki/`。
 
 编辑 `~/.hermes/config.yaml`，将 `hermes-wiki` 添加到插件列表：
 
