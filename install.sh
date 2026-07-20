@@ -7,6 +7,7 @@ set -euo pipefail
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 BACKEND_SRC="$(cd "$(dirname "$0")/backend" && pwd)"
 DESKTOP_SRC="$(cd "$(dirname "$0")/desktop" && pwd)"
+PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/gateway-rpc.patch"
 
 BACKEND_DST="$HERMES_HOME/plugins/hermes_wiki"
 DESKTOP_DST="$HERMES_HOME/desktop-plugins/wiki"
@@ -26,6 +27,29 @@ echo "  Backend  -> $BACKEND_DST"
 mkdir -p "$DESKTOP_DST"
 cp "$DESKTOP_SRC/plugin.js" "$DESKTOP_DST/"
 echo "  Desktop  -> $DESKTOP_DST"
+
+# Gateway RPC patch (needed until PR #66874 is merged upstream)
+HERMES_AGENT="$HERMES_HOME/hermes-agent"
+if [ -d "$HERMES_AGENT/.git" ] && [ -f "$PATCH_FILE" ]; then
+  echo ""
+  echo "Checking gateway RPC patch..."
+  # Check if already applied (register_rpc exists in plugins.py)
+  if grep -q "register_rpc" "$HERMES_AGENT/hermes_cli/plugins.py" 2>/dev/null; then
+    echo "  Gateway RPC patch already applied."
+  else
+    echo "  Applying gateway RPC patch to $HERMES_AGENT..."
+    if (cd "$HERMES_AGENT" && git apply --check "$PATCH_FILE" 2>/dev/null); then
+      (cd "$HERMES_AGENT" && git apply "$PATCH_FILE")
+      echo "  Patch applied successfully."
+      echo "  Restart Hermes gateway to activate wiki RPC."
+    else
+      echo "  ⚠ Patch could not be applied automatically."
+      echo "  This may happen after 'hermes update' changes the source."
+      echo "  Manual fix: cd $HERMES_AGENT && git apply $PATCH_FILE"
+      echo "  Or wait for PR #66874 to be merged upstream."
+    fi
+  fi
+fi
 
 # Check config
 CONFIG="$HERMES_HOME/config.yaml"
