@@ -51,13 +51,29 @@ if [ -d "$HERMES_AGENT/.git" ] && [ -f "$PATCH_FILE" ]; then
   fi
 fi
 
-# Check config
+# Check config and enable hermes-wiki plugin + toolset
 CONFIG="$HERMES_HOME/config.yaml"
 if [ -f "$CONFIG" ]; then
   if ! grep -q "hermes-wiki" "$CONFIG"; then
     echo ""
     echo "  Add 'hermes-wiki' to plugins.enabled in $CONFIG"
   fi
+  # Enable hermes-wiki toolset so wiki_search is available to the agent
+  python3 -c "
+import yaml
+cfg_path = '$CONFIG'
+with open(cfg_path) as f:
+    cfg = yaml.safe_load(f) or {}
+toolsets = cfg.get('toolsets', [])
+if isinstance(toolsets, list) and 'hermes-wiki' not in toolsets:
+    toolsets.append('hermes-wiki')
+    cfg['toolsets'] = toolsets
+    with open(cfg_path, 'w') as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+    print('  Enabled hermes-wiki toolset (wiki_search available)')
+else:
+    print('  hermes-wiki toolset already enabled')
+" 2>/dev/null || echo "  (toolset config skipped — manual: hermes tools enable hermes-wiki)"
 fi
 
 echo ""

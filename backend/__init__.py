@@ -270,7 +270,7 @@ def register(ctx) -> None:
         _wiki_store = WikiStore()
         ctx.register_tool(
             name="wiki_search",
-            toolset="memory",
+            toolset="hermes-wiki",
             schema=WIKI_SEARCH_SCHEMA,
             handler=_handle_wiki_search,
         )
