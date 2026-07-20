@@ -54,6 +54,30 @@ Hermes와 대화
 - `~/.hermes/config.yaml`의 `plugins.enabled`에 `hermes-wiki`가 있는지 확인
 - 디렉토리가 `~/.hermes/plugins/hermes_wiki/`인지 확인 (밑줄, 하이픈 아님)
 
+## 사용법
+
+### Wiki 페이지 검색
+
+**독립 모드**:
+```
+사용자: nginx 토론에 대한 wiki 검색
+Hermes: [wiki_search(query='nginx') 호출]
+  → 일치하는 wiki 페이지 반환
+```
+
+**팁**: LLM이 항상 `wiki_search`를 우선하지 않을 수 있습니다. wiki 결과를 확실히 얻으려면 쿼리에서 명시적으로 "wiki"를 언급하세요:
+```
+사용자: wiki_search로 nginx 토론 검색
+사용자: Wiki에서 오늘의 활동 검색
+사용자: wiki에서 커스텀 엔드포인트 작업 검색
+```
+
+다중 단어 쿼리 지원 — 도구가 쿼리를 단어로 분리하여任意의 단어와 일치합니다:
+```
+사용자: wiki_search로 "wiki 플러그인 개발" 검색
+  → "wiki" 또는 "플러그인" 또는 "개발"을 포함하는 페이지와 일치
+```
+
 ## 라이선스
 
 MIT

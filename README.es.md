@@ -52,6 +52,30 @@ Conversación con Hermes
 - Verifica que `~/.hermes/config.yaml` tenga `hermes-wiki` en `plugins.enabled`
 - El directorio debe ser `~/.hermes/plugins/hermes_wiki/` (guion bajo, no guion)
 
+## Uso
+
+### Búsqueda de páginas Wiki
+
+**Modo autónomo**:
+```
+Tú: Busca discusiones de nginx en el wiki
+Hermes: [llama a wiki_search(query='nginx')]
+  → Devuelve páginas wiki coincidentes
+```
+
+**Consejo**: El LLM no siempre prioriza `wiki_search`. Para asegurar resultados del wiki, menciona explícitamente "wiki" en tu consulta:
+```
+Tú: Usa wiki_search para buscar nuestras discusiones sobre nginx
+Tú: Busca en el wiki las actividades de hoy
+Tú: Busca en el wiki el trabajo de endpoints personalizados
+```
+
+Se admiten consultas de múltiples palabras — la herramienta divide tu consulta en palabras y coincide con cualquiera:
+```
+Tú: wiki_search para "wiki plugin desarrollo"
+  → Coincide con páginas que contengan "wiki" O "plugin" O "desarrollo"
+```
+
 ## Licencia
 
 MIT
