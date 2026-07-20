@@ -223,7 +223,7 @@ def wiki_batch_process(rid, params):
             if enqueued >= limit:
                 break
             msg_rows = state_db.execute(
-                "SELECT role, content FROM messages "
+                "SELECT role, content, timestamp FROM messages "
                 "WHERE session_id = ? AND role IN ('user', 'assistant') "
                 "ORDER BY timestamp ASC",
                 (sid,),
@@ -231,7 +231,8 @@ def wiki_batch_process(rid, params):
             messages = [{"role": r["role"], "content": r["content"] or ""} for r in msg_rows]
             if len(messages) < 2:
                 continue
-            queue_id = ws.enqueue(sid, messages, sess["title"] or "", sess["source"] or "")
+            latest_ts = max(r["timestamp"] for r in msg_rows) if msg_rows else None
+            queue_id = ws.enqueue(sid, messages, sess["title"] or "", sess["source"] or "", latest_message_at=latest_ts)
             if queue_id:
                 enqueued += 1
         state_db.close()

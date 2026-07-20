@@ -110,7 +110,7 @@ class WikiBuilder:
         if analysis is None:
             raise RuntimeError("LLM returned no usable wiki analysis")
         quality = max(1, min(5, analysis.get("quality", 2)))
-        date = self._date_from_id(session_id)
+        date = item.get("latest_date") or self._date_from_id(session_id)
         slug = self._slug(date, analysis.get("title", title))
         lang = analysis.get("language", "en")
         topics = analysis.get("topics", [])
@@ -120,6 +120,17 @@ class WikiBuilder:
         # Use LLM's full_content if available, otherwise fallback to _build_page
         llm_content = analysis.get("full_content", "")
         if llm_content and len(llm_content) > 50:
+            # Fix LLM-hallucinated dates in YAML frontmatter and title
+            llm_content = re.sub(
+                r'^(date:\s*)\d{4}(-\d{2}(?:-\d{2})?)',
+                rf'\g<1>{date}',
+                llm_content, count=1, flags=re.MULTILINE,
+            )
+            llm_content = re.sub(
+                r'^(#\s*.*?)\(\d{4}-\d{2}-\d{2}\)',
+                rf'\1({date})',
+                llm_content, count=1, flags=re.MULTILINE,
+            )
             full_content = llm_content
         else:
             full_content = self._build_page(

@@ -111,7 +111,7 @@ def _batch_scan() -> None:
             source = sess["source"] or ""
 
             msg_rows = state_db.execute(
-                """SELECT role, content FROM messages
+                """SELECT role, content, timestamp FROM messages
                    WHERE session_id = ? AND role IN ('user', 'assistant')
                    ORDER BY timestamp ASC""",
                 (sid,),
@@ -124,7 +124,8 @@ def _batch_scan() -> None:
             if _wiki_store.is_session_processed(sid) and current_count <= _wiki_store.session_message_count(sid):
                 continue
 
-            _wiki_store.enqueue(sid, messages, title, source, message_count=current_count)
+            latest_ts = max(r["timestamp"] for r in msg_rows) if msg_rows else None
+            _wiki_store.enqueue(sid, messages, title, source, message_count=current_count, latest_message_at=latest_ts)
             enqueued += 1
 
         state_db.close()

@@ -9,6 +9,7 @@ Tables are prefixed with 'wiki_' to avoid collision with holographic tables.
 Uses memory_store.db so wiki data co-exists with fact_store.
 """
 
+import datetime
 import json
 import logging
 import sqlite3
@@ -144,6 +145,7 @@ class WikiStore:
             ("attempts", "INTEGER DEFAULT 0"),
             ("next_retry_at", "TIMESTAMP"),
             ("last_error", "TEXT"),
+            ("latest_date", "TEXT"),
         ):
             if name not in queue_columns:
                 self._conn.execute(f"ALTER TABLE hermes_wiki_pending_queue ADD COLUMN {name} {definition}")
@@ -158,9 +160,13 @@ class WikiStore:
         title: str = "",
         source: str = "",
         message_count: Optional[int] = None,
+        latest_message_at: Optional[float] = None,
     ) -> int:
         messages_json = json.dumps(messages, ensure_ascii=False)
         source_count = len(messages) if message_count is None else int(message_count)
+        latest_date = None
+        if latest_message_at is not None:
+            latest_date = datetime.datetime.fromtimestamp(latest_message_at).strftime("%Y-%m-%d")
         with self._lock:
             active = self._conn.execute(
                 """SELECT id FROM hermes_wiki_pending_queue
@@ -172,9 +178,9 @@ class WikiStore:
                 return int(active[0])
             cur = self._conn.execute(
                 """INSERT INTO hermes_wiki_pending_queue
-                   (session_id, title, source, message_count, messages_json, status)
-                   VALUES (?, ?, ?, ?, ?, 'pending')""",
-                (session_id, title, source, source_count, messages_json),
+                   (session_id, title, source, message_count, messages_json, latest_date, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+                (session_id, title, source, source_count, messages_json, latest_date),
             )
             self._conn.commit()
             return cur.lastrowid  # type: ignore[return-value]
@@ -182,7 +188,7 @@ class WikiStore:
     def dequeue(self, limit: int = 1) -> list:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT id, session_id, title, source, message_count, messages_json
+                """SELECT id, session_id, title, source, message_count, messages_json, latest_date
                    FROM hermes_wiki_pending_queue
                    WHERE status = 'pending'
                      AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
