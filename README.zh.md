@@ -68,6 +68,7 @@ plugins:
 - 自己管理 SQLite 连接
 - 添加 `wiki_search` 工具用于查询 wiki 页面
 - 独立于其他记忆插件工作
+- 工具注册在 `memory` toolset
 
 ## 使用方式
 
@@ -85,6 +86,19 @@ Hermes：[调用 fact_store(action='search', query='nginx')]
 你：搜索 wiki 中关于 nginx 的讨论
 Hermes：[调用 wiki_search(query='nginx')]
   → 返回匹配的 wiki 页面
+```
+
+**提示**：LLM 不一定会优先使用 `wiki_search`。为确保获得 wiki 结果，请在查询中明确提及"wiki"：
+```
+你：用 wiki_search 搜索我们关于 nginx 的讨论
+你：Wiki 搜索今天的活动
+你：搜索 wiki 中关于自定义端点的工作
+```
+
+支持多词查询——工具会将查询拆分为单词并匹配任意一个：
+```
+你：wiki_search 搜索 "wiki 插件开发"
+  → 匹配包含 "wiki" 或 "插件" 或 "开发" 的页面
 ```
 
 ### 直接查看 wiki 页面

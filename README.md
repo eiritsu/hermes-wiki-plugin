@@ -70,6 +70,7 @@ The plugin auto-detects which mode to use at startup:
 - Manages own SQLite connection
 - Adds `wiki_search` tool for querying wiki pages
 - Works independently of any other memory plugin
+- Tool is registered to the `memory` toolset
 
 ## Usage
 
@@ -87,6 +88,19 @@ Hermes: [calls fact_store(action='search', query='nginx')]
 You: Search the wiki for nginx discussions
 Hermes: [calls wiki_search(query='nginx')]
   → Returns matching wiki pages
+```
+
+**Tip**: The LLM may not always prefer `wiki_search` over `session_search`. To ensure wiki results, explicitly mention "wiki" in your query:
+```
+You: Use wiki_search to find our discussion about nginx
+You: Wiki search for today's activities
+You: Search the wiki for custom endpoint work
+```
+
+Multi-word queries are supported — the tool splits your query into words and matches any of them:
+```
+You: wiki_search for "wiki plugin development"
+  → Matches pages containing "wiki" OR "plugin" OR "development"
 ```
 
 ### Checking Wiki Pages Directly
