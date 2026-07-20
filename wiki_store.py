@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS hermes_wiki_pages (
     summary        TEXT,
     full_content   TEXT,
     source_session_id TEXT,
+    message_count  INTEGER DEFAULT 0,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -46,7 +47,18 @@ CREATE TABLE IF NOT EXISTS hermes_wiki_pending_queue (
     message_count  INTEGER,
     messages_json  TEXT NOT NULL,
     enqueued_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processing_started_at TIMESTAMP,
+    attempts       INTEGER DEFAULT 0,
+    next_retry_at  TIMESTAMP,
+    last_error     TEXT,
     status         TEXT DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS hermes_wiki_session_state (
+    session_id      TEXT PRIMARY KEY,
+    message_count   INTEGER NOT NULL DEFAULT 0,
+    quality         INTEGER,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_hermes_wiki_queue_status ON hermes_wiki_pending_queue(status);
@@ -121,18 +133,48 @@ class WikiStore:
     def _init_schema(self) -> None:
         """Create wiki tables if they don't exist."""
         self._conn.executescript(_WIKI_SCHEMA)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(hermes_wiki_pages)").fetchall()}
+        if "message_count" not in columns:
+            self._conn.execute("ALTER TABLE hermes_wiki_pages ADD COLUMN message_count INTEGER DEFAULT 0")
+        queue_columns = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(hermes_wiki_pending_queue)").fetchall()
+        }
+        for name, definition in (
+            ("processing_started_at", "TIMESTAMP"),
+            ("attempts", "INTEGER DEFAULT 0"),
+            ("next_retry_at", "TIMESTAMP"),
+            ("last_error", "TEXT"),
+        ):
+            if name not in queue_columns:
+                self._conn.execute(f"ALTER TABLE hermes_wiki_pending_queue ADD COLUMN {name} {definition}")
         self._conn.commit()
 
     # -- Queue operations ---------------------------------------------------
 
-    def enqueue(self, session_id: str, messages: list, title: str = "", source: str = "") -> int:
+    def enqueue(
+        self,
+        session_id: str,
+        messages: list,
+        title: str = "",
+        source: str = "",
+        message_count: Optional[int] = None,
+    ) -> int:
         messages_json = json.dumps(messages, ensure_ascii=False)
+        source_count = len(messages) if message_count is None else int(message_count)
         with self._lock:
+            active = self._conn.execute(
+                """SELECT id FROM hermes_wiki_pending_queue
+                   WHERE session_id = ? AND status IN ('pending', 'processing')
+                   ORDER BY id DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            if active:
+                return int(active[0])
             cur = self._conn.execute(
                 """INSERT INTO hermes_wiki_pending_queue
                    (session_id, title, source, message_count, messages_json, status)
                    VALUES (?, ?, ?, ?, ?, 'pending')""",
-                (session_id, title, source, len(messages), messages_json),
+                (session_id, title, source, source_count, messages_json),
             )
             self._conn.commit()
             return cur.lastrowid  # type: ignore[return-value]
@@ -141,7 +183,9 @@ class WikiStore:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT id, session_id, title, source, message_count, messages_json
-                   FROM hermes_wiki_pending_queue WHERE status = 'pending'
+                   FROM hermes_wiki_pending_queue
+                   WHERE status = 'pending'
+                     AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
                    ORDER BY enqueued_at ASC LIMIT ?""",
                 (limit,),
             ).fetchall()
@@ -150,7 +194,9 @@ class WikiStore:
             ids = [dict(r)["id"] for r in rows]
             placeholders = ",".join("?" * len(ids))
             self._conn.execute(
-                f"UPDATE hermes_wiki_pending_queue SET status = 'processing' WHERE id IN ({placeholders})",
+                f"UPDATE hermes_wiki_pending_queue "
+                f"SET status = 'processing', processing_started_at = CURRENT_TIMESTAMP "
+                f"WHERE id IN ({placeholders})",
                 ids,
             )
             self._conn.commit()
@@ -164,9 +210,54 @@ class WikiStore:
     def mark_done(self, queue_id: int, status: str = "done") -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE hermes_wiki_pending_queue SET status = ? WHERE id = ?", (status, queue_id)
+                "UPDATE hermes_wiki_pending_queue SET status = ?, processing_started_at = NULL WHERE id = ?",
+                (status, queue_id),
             )
             self._conn.commit()
+
+    def retry_or_fail(self, queue_id: int, error: str, max_attempts: int = 3) -> str:
+        """Retry transient failures with exponential backoff, then mark failed."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT attempts FROM hermes_wiki_pending_queue WHERE id = ?", (queue_id,)
+            ).fetchone()
+            attempts = int(row[0] or 0) + 1 if row else max_attempts
+            status = "failed" if attempts >= max_attempts else "pending"
+            delay_seconds = min(300, 15 * (2 ** (attempts - 1)))
+            retry_at = None if status == "failed" else f"+{delay_seconds} seconds"
+            self._conn.execute(
+                """UPDATE hermes_wiki_pending_queue
+                   SET status = ?, attempts = ?, last_error = ?, processing_started_at = NULL,
+                       next_retry_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END
+                   WHERE id = ?""",
+                (status, attempts, error[:1000], retry_at, retry_at, queue_id),
+            )
+            self._conn.commit()
+            return status
+
+    def recover_stale_processing(self, max_age_seconds: int = 900) -> int:
+        """Requeue work left in processing by an interrupted worker."""
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE hermes_wiki_pending_queue
+                   SET status = 'pending', processing_started_at = NULL,
+                       last_error = COALESCE(last_error, 'worker interrupted')
+                   WHERE status = 'processing'
+                     AND processing_started_at < datetime('now', ?)""",
+                (f"-{max_age_seconds} seconds",),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def delete_low_quality_session_page(self, session_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM hermes_wiki_pages "
+                "WHERE source_session_id = ? AND page_type = 'session' AND quality < 4",
+                (session_id,),
+            )
+            self._conn.commit()
+            return cur.rowcount
 
     def pending_count(self) -> int:
         row = self._conn.execute(
@@ -178,19 +269,47 @@ class WikiStore:
         if not session_id:
             return False
         row = self._conn.execute(
-            "SELECT 1 FROM hermes_wiki_pages WHERE source_session_id = ?", (session_id,)
+            "SELECT 1 FROM hermes_wiki_session_state WHERE session_id = ?", (session_id,)
         ).fetchone()
         return row is not None
+
+    def session_message_count(self, session_id: str) -> int:
+        if not session_id:
+            return 0
+        row = self._conn.execute(
+            "SELECT message_count FROM hermes_wiki_session_state WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def record_session_state(self, session_id: str, message_count: int, quality: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO hermes_wiki_session_state (session_id, message_count, quality, updated_at)
+                   VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(session_id) DO UPDATE SET
+                       message_count = excluded.message_count,
+                       quality = excluded.quality,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (session_id, message_count, quality),
+            )
+            self._conn.commit()
 
     # -- Wiki page CRUD -----------------------------------------------------
 
     def insert_page(self, **kwargs) -> int:
         with self._lock:
+            source_session_id = kwargs.get("source_session_id")
+            if source_session_id:
+                self._conn.execute(
+                    "DELETE FROM hermes_wiki_pages WHERE source_session_id = ? AND slug != ?",
+                    (source_session_id, kwargs["slug"]),
+                )
             cur = self._conn.execute(
                 """INSERT OR REPLACE INTO hermes_wiki_pages
                    (page_type, slug, title, date, language, quality, content_type,
-                    topics, keywords, entities, summary, full_content, source_session_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    topics, keywords, entities, summary, full_content, source_session_id, message_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     kwargs.get("page_type", "session"),
                     kwargs["slug"],
@@ -204,7 +323,8 @@ class WikiStore:
                     json.dumps(kwargs.get("entities", []), ensure_ascii=False),
                     kwargs.get("summary"),
                     kwargs.get("full_content"),
-                    kwargs.get("source_session_id"),
+                    source_session_id,
+                    kwargs.get("message_count", 0),
                 ),
             )
             self._conn.commit()

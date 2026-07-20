@@ -4,10 +4,16 @@ hermes-wiki — Automatic session-to-wiki conversion plugin.
 Two modes:
   - Extension mode: holographic active → shares connection, augments fact_store search
   - Standalone mode: no holographic → own connection, wiki_search tool
+
+Trigger strategy:
+  - on_session_end hook: immediate processing when session closes
+  - Periodic scan (every 5 min): incremental batch of unprocessed sessions from state.db
+  - First load: full batch of all historical sessions
 """
 
 import json
 import logging
+import sqlite3
 import threading
 from typing import Any, Dict, List
 
@@ -17,6 +23,8 @@ _wiki_store = None
 _wiki_builder = None
 _wiki_thread = None
 _wiki_thread_lock = threading.Lock()
+_scan_timer = None
+_SCAN_INTERVAL = 300  # 5 minutes
 
 WIKI_SEARCH_SCHEMA = {
     "name": "wiki_search",
@@ -36,6 +44,8 @@ WIKI_SEARCH_SCHEMA = {
     },
 }
 
+
+# ── Session end hook ────────────────────────────────────────────────────
 
 def _on_session_end(messages: List[Dict[str, Any]], **kwargs) -> None:
     """Hook: enqueue session for wiki processing (non-blocking)."""
@@ -57,6 +67,111 @@ def _on_session_end(messages: List[Dict[str, Any]], **kwargs) -> None:
         logger.debug("hermes-wiki: enqueue failed: %s", e)
 
 
+# ── Periodic batch scan ────────────────────────────────────────────────
+
+def _batch_scan() -> None:
+    """Scan state.db for unprocessed sessions and enqueue them."""
+    global _wiki_store, _wiki_builder
+    if not _wiki_store or not _wiki_builder:
+        return
+
+    try:
+        _wiki_store.recover_stale_processing(max_age_seconds=900)
+        from hermes_constants import get_hermes_home
+        state_db_path = str(get_hermes_home() / "state.db")
+
+        state_db = sqlite3.connect(state_db_path, check_same_thread=False, timeout=5.0)
+        state_db.row_factory = sqlite3.Row
+
+        # Get all non-cron/subagent sessions with >= 2 messages
+        sessions = state_db.execute(
+            """SELECT id, title, source, message_count
+               FROM sessions
+               WHERE source NOT IN ('cron', 'subagent')
+                 AND message_count >= 2
+               ORDER BY started_at DESC
+               LIMIT 50""",
+        ).fetchall()
+
+        # Read messages for each session and compare the same user/assistant
+        # count that is persisted in hermes_wiki_session_state.
+        enqueued = 0
+        for sess in sessions:
+            sid = sess["id"]
+
+            # Check queue too (pending but not yet processed)
+            pending_rows = _wiki_store._conn.execute(
+                "SELECT 1 FROM hermes_wiki_pending_queue WHERE session_id = ? AND status IN ('pending', 'processing')",
+                (sid,),
+            ).fetchone()
+            if pending_rows:
+                continue
+
+            title = sess["title"] or ""
+            source = sess["source"] or ""
+
+            msg_rows = state_db.execute(
+                """SELECT role, content FROM messages
+                   WHERE session_id = ? AND role IN ('user', 'assistant')
+                   ORDER BY timestamp ASC""",
+                (sid,),
+            ).fetchall()
+
+            messages = [{"role": r["role"], "content": r["content"] or ""} for r in msg_rows]
+            current_count = len(messages)
+            if current_count < 2:
+                continue
+            if _wiki_store.is_session_processed(sid) and current_count <= _wiki_store.session_message_count(sid):
+                continue
+
+            _wiki_store.enqueue(sid, messages, title, source, message_count=current_count)
+            enqueued += 1
+
+        state_db.close()
+
+        if enqueued:
+            logger.info("hermes-wiki: batch scan enqueued %d sessions", enqueued)
+            _schedule_worker()
+        else:
+            # No new sessions — check if there are retried items ready to process
+            ready = _wiki_store._conn.execute(
+                "SELECT 1 FROM hermes_wiki_pending_queue "
+                "WHERE status = 'pending' "
+                "AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP) "
+                "LIMIT 1"
+            ).fetchone()
+            if ready:
+                _schedule_worker()
+            elif _wiki_builder:
+                _wiki_builder.cleanup()
+
+    except Exception as e:
+        logger.debug("hermes-wiki: batch scan failed: %s", e)
+
+
+def _start_scan_timer() -> None:
+    """Start periodic scan timer (every 5 minutes)."""
+    global _scan_timer
+    try:
+        _batch_scan()  # Run immediately on first load
+    except Exception:
+        pass
+
+    def _tick():
+        _batch_scan()
+        _schedule_timer()
+
+    def _schedule_timer():
+        global _scan_timer
+        _scan_timer = threading.Timer(_SCAN_INTERVAL, _tick)
+        _scan_timer.daemon = True
+        _scan_timer.start()
+
+    _schedule_timer()
+
+
+# ── Background worker ──────────────────────────────────────────────────
+
 def _schedule_worker() -> None:
     global _wiki_thread
     with _wiki_thread_lock:
@@ -76,6 +191,8 @@ def _worker() -> None:
         logger.error("hermes-wiki: worker failed: %s", e)
 
 
+# ── Tool handlers ──────────────────────────────────────────────────────
+
 def _handle_wiki_search(args: dict) -> str:
     global _wiki_store
     if not _wiki_store:
@@ -88,11 +205,7 @@ def _handle_wiki_search(args: dict) -> str:
 
 
 def _transform_fact_store_result(tool_name: str, result: str, **kwargs) -> str:
-    """Hook: inject wiki results into fact_store search results.
-
-    When holographic is active and user calls fact_store(action='search'),
-    this hook appends wiki page results to the response.
-    """
+    """Hook: inject wiki results into fact_store search results."""
     if tool_name != "fact_store":
         return result
     try:
@@ -124,6 +237,8 @@ def _transform_fact_store_result(tool_name: str, result: str, **kwargs) -> str:
         return result
 
 
+# ── Plugin entry point ─────────────────────────────────────────────────
+
 def register(ctx) -> None:
     """Plugin entry point: detect holographic, register hooks and tools."""
     global _wiki_store, _wiki_builder
@@ -136,7 +251,6 @@ def register(ctx) -> None:
     holographic_lock = None
     try:
         from plugins.memory.holographic.store import MemoryStore as HoloStore
-        # Access the shared connection registry
         if HoloStore._shared:
             for key, entry in HoloStore._shared.items():
                 if "memory_store.db" in key:
@@ -149,12 +263,10 @@ def register(ctx) -> None:
     if holographic_conn:
         logger.info("hermes-wiki: extension mode (holographic detected)")
         _wiki_store = WikiStore(conn=holographic_conn, lock=holographic_lock)
-        # Augment fact_store search with wiki results
         ctx.register_hook("transform_tool_result", _transform_fact_store_result)
     else:
         logger.info("hermes-wiki: standalone mode")
         _wiki_store = WikiStore()
-        # Register wiki_search tool
         ctx.register_tool(
             name="wiki_search",
             toolset="hermes-wiki",
@@ -164,8 +276,25 @@ def register(ctx) -> None:
 
     _wiki_builder = WikiBuilder(_wiki_store)
 
-    # Register session end hook
+    # Register session end hook (immediate processing)
     ctx.register_hook("on_session_end", _on_session_end)
 
-    # Process leftover queue from previous runs
-    _schedule_worker()
+    # Register Gateway RPC methods for Desktop Plugin GUI when the host supports it.
+    # Older/local Hermes builds without plugin RPC must still load the backend timer.
+    if hasattr(ctx, "register_rpc"):
+        from .wiki_rpc import (
+            wiki_list, wiki_get, wiki_create,
+            wiki_update, wiki_delete, wiki_stats, wiki_batch_process,
+        )
+        ctx.register_rpc("wiki.list", wiki_list)
+        ctx.register_rpc("wiki.get", wiki_get)
+        ctx.register_rpc("wiki.create", wiki_create)
+        ctx.register_rpc("wiki.update", wiki_update)
+        ctx.register_rpc("wiki.delete", wiki_delete)
+        ctx.register_rpc("wiki.stats", wiki_stats)
+        ctx.register_rpc("wiki.batch_process", wiki_batch_process)
+    else:
+        logger.warning("hermes-wiki: plugin RPC unavailable; Desktop GUI RPC disabled")
+
+    # Start periodic scan timer (5 min interval + immediate first run)
+    _start_scan_timer()

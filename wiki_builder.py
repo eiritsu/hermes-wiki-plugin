@@ -9,6 +9,7 @@ import datetime
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -46,17 +47,47 @@ class WikiBuilder:
                 self._store.mark_done(item["id"], "done")
                 processed += 1
             except Exception as e:
-                logger.error("hermes-wiki: failed for %s: %s", item.get("session_id"), e)
-                self._store.mark_done(item["id"], "failed")
+                status = self._store.retry_or_fail(item["id"], str(e))
+                logger.warning(
+                    "hermes-wiki: %s for %s after error: %s",
+                    status, item.get("session_id"), e,
+                )
+        self._cleanup()
         return processed
+
+    def cleanup(self) -> None:
+        """Public cleanup — can be called independently."""
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Remove low-quality pages, topic pages, and stale queue entries."""
+        try:
+            with self._store._lock:
+                # 1. Delete quality < 4 session pages
+                self._store._conn.execute(
+                    "DELETE FROM hermes_wiki_pages WHERE quality < 4 AND page_type = 'session'"
+                )
+                # 2. Delete all topic pages (not needed)
+                self._store._conn.execute(
+                    "DELETE FROM hermes_wiki_pages WHERE page_type = 'topic'"
+                )
+                # 3. Clean up done/failed queue entries
+                self._store._conn.execute(
+                    "DELETE FROM hermes_wiki_pending_queue WHERE status IN ('done', 'failed')"
+                )
+                self._store._conn.commit()
+            logger.debug("hermes-wiki: cleanup done")
+        except Exception as e:
+            logger.debug("hermes-wiki: cleanup failed: %s", e)
 
     def _process_session(self, item: dict) -> None:
         session_id = item["session_id"]
         title = item.get("title", "") or ""
         source = item.get("source", "")
         messages = item.get("messages", [])
+        source_message_count = int(item.get("message_count") or len(messages))
 
-        if self._store.is_session_processed(session_id):
+        if self._store.is_session_processed(session_id) and source_message_count <= self._store.session_message_count(session_id):
             return
 
         filtered = []
@@ -75,7 +106,9 @@ class WikiBuilder:
         if len(filtered) > _MAX_MSGS:
             filtered = filtered[:_MAX_MSGS]
 
-        analysis = self._call_llm(filtered, title, source) or self._default(title)
+        analysis = self._call_llm(filtered, title, source)
+        if analysis is None:
+            raise RuntimeError("LLM returned no usable wiki analysis")
         quality = max(1, min(5, analysis.get("quality", 2)))
         date = self._date_from_id(session_id)
         slug = self._slug(date, analysis.get("title", title))
@@ -84,13 +117,18 @@ class WikiBuilder:
         entities = analysis.get("entities", [])
         keywords = analysis.get("keywords", [])
 
-        full_content = self._build_page(
-            session_id=session_id, date=date, title=analysis.get("title", title),
-            language=lang, quality=quality, content_type=analysis.get("content_type", "discussion"),
-            topics=topics, entities=entities, keywords=keywords,
-            result=analysis.get("result", ""), background=analysis.get("background", ""),
-            decisions=analysis.get("decisions", []), problems=analysis.get("problems", []),
-        )
+        # Use LLM's full_content if available, otherwise fallback to _build_page
+        llm_content = analysis.get("full_content", "")
+        if llm_content and len(llm_content) > 50:
+            full_content = llm_content
+        else:
+            full_content = self._build_page(
+                session_id=session_id, date=date, title=analysis.get("title", title),
+                language=lang, quality=quality, content_type=analysis.get("content_type", "discussion"),
+                topics=topics, entities=entities, keywords=keywords,
+                result=analysis.get("result", ""), background=analysis.get("background", ""),
+                decisions=analysis.get("decisions", []), problems=analysis.get("problems", []),
+            )
 
         self._store.insert_page(
             page_type="session", slug=slug, title=analysis.get("title", title),
@@ -99,11 +137,17 @@ class WikiBuilder:
             topics=topics, entities=entities, keywords=keywords,
             summary=(analysis.get("result", "") or analysis.get("background", ""))[:200],
             full_content=full_content, source_session_id=session_id,
+            message_count=source_message_count,
         )
 
-        for topic in topics:
-            self._update_topic(topic, date, analysis.get("title", title), quality)
+        if quality < 4:
+            # Record the attempted revision so periodic scans do not endlessly requeue it.
+            self._store.delete_low_quality_session_page(session_id)
+            self._store.record_session_state(session_id, source_message_count, quality)
+            logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", session_id, quality)
+            return
 
+        self._store.record_session_state(session_id, source_message_count, quality)
         logger.info("hermes-wiki: %s (q=%d, topics=%s)", slug, quality, topics)
 
     # -- LLM call -----------------------------------------------------------
@@ -127,16 +171,19 @@ class WikiBuilder:
                     mc = cfg.get("model", {})
                     model = model or mc.get("default", "") or mc.get("model", "")
                     provider = provider or mc.get("provider", "")
-                    base_url = base_url or mc.get("base_url", "")
             except Exception:
                 pass
 
         if not model:
+            logger.warning("No model configured, skipping LLM call")
             return None
+
         if not base_url:
             base_url = self._resolve_url(provider)
         if not base_url:
+            logger.warning("Cannot resolve base_url for %s", provider)
             return None
+
         if not api_key:
             api_key = self._resolve_key(provider)
         if not api_key:
@@ -148,32 +195,65 @@ class WikiBuilder:
         ]
 
         try:
-            with httpx.Client(timeout=60.0) as client:
-                resp = client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    json={"model": model, "messages": msgs, "max_tokens": 2000, "temperature": 0.3},
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-                )
-                resp.raise_for_status()
-            return self._extract_json(resp.json()["choices"][0]["message"]["content"])
+            with httpx.Client(timeout=httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)) as client:
+                # Detect API format from URL
+                if "/anthropic" in base_url:
+                    # Anthropic Messages API
+                    anthropic_msgs = [{"role": "user", "content": msgs[1]["content"]}]
+                    resp = client.post(
+                        f"{base_url.rstrip('/')}/v1/messages",
+                        json={"model": model, "max_tokens": 4096,
+                              "system": msgs[0]["content"],
+                              "messages": anthropic_msgs},
+                        headers={"Content-Type": "application/json",
+                                 "x-api-key": api_key,
+                                 "anthropic-version": "2023-06-01"},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    try:
+                        content = data["content"][0]["text"]
+                    except (KeyError, IndexError, TypeError) as e:
+                        logger.error("hermes-wiki: unexpected Anthropic response: %s", e)
+                        return None
+                else:
+                    # OpenAI Chat Completions API
+                    resp = client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        json={"model": model, "messages": msgs,
+                              "max_tokens": 2000, "temperature": 0.3},
+                        headers={"Content-Type": "application/json",
+                                 "Authorization": f"Bearer {api_key}"},
+                    )
+                    resp.raise_for_status()
+                    content = resp.json()["choices"][0]["message"]["content"]
+            return self._extract_json(content)
         except Exception as e:
             logger.error("hermes-wiki: LLM failed: %s", e)
             return None
 
     def _prompt(self) -> str:
+        """Load prompt from prompts/default.md, fallback to built-in."""
+        try:
+            prompt_path = Path(__file__).parent / "prompts" / "default.md"
+            if prompt_path.exists():
+                return prompt_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        # Built-in fallback
         return (
             "Analyze the following session and return strict JSON only:\n"
             '{"title":"Session title (<=30 chars)","language":"en","quality":3,'
             '"content_type":"discussion","topics":["topic-slug"],"entities":["Entity Name"],'
             '"keywords":["keyword"],"result":"One-sentence outcome",'
             '"background":"Brief user goal (<=100 chars)",'
-            '"decisions":["Decision and reason"],"problems":["Problem -> Solution"]}\n\n'
+            '"decisions":["Decision and reason"],"problems":["Problem -> Solution"],'
+            '"full_content":"Complete Obsidian wiki page with YAML frontmatter, ## sections, [[wiki-links]], #tags"}\n\n'
             "CRITICAL: Respond in the SAME LANGUAGE as the session content.\n"
             'language field: ISO 639-1 ("en","zh","ja","ko","de","fr","es").\n'
             "All text fields in that language. topic slugs, entity names, content_type in English.\n"
             "Quality: 5=deep+important, 4=substantial, 3=moderate, 2=simple Q&A, 1=no value.\n"
-            "Types: troubleshooting/development/research/planning/review/setup/migration/quickfix/discussion.\n"
-            "Max 3 topics. Reuse existing slugs when possible."
+            "full_content must be substantial (5+ paragraphs for quality >= 3)."
         )
 
     def _format_msgs(self, messages: list, title: str, source: str) -> str:
@@ -202,37 +282,38 @@ class WikiBuilder:
                 continue
         return None
 
-    # -- URL/key resolution -------------------------------------------------
+    # -- URL/key resolution (uses Hermes provider system) -----------------
 
-    def _resolve_url(self, provider: str) -> Optional[str]:
+    @staticmethod
+    def _resolve_url(provider: str) -> Optional[str]:
+        """Resolve base URL — same logic as Hermes agent."""
         import os
-        for k in ("OPENAI_BASE_URL", "CUSTOM_BASE_URL", "XIAOMI_BASE_URL"):
-            if os.environ.get(k):
-                return os.environ[k]
         try:
-            from hermes_cli.auth import PROVIDER_REGISTRY
-            cfg = PROVIDER_REGISTRY.get(provider)
-            if cfg and cfg.inference_base_url:
-                if cfg.base_url_env_var and os.environ.get(cfg.base_url_env_var):
-                    return os.environ[cfg.base_url_env_var]
-                return cfg.inference_base_url
-        except ImportError:
+            from hermes_cli.providers import resolve_provider_full
+            pdef = resolve_provider_full(provider)
+            if pdef:
+                # Env var override takes precedence (same as agent)
+                if pdef.base_url_env_var and os.environ.get(pdef.base_url_env_var):
+                    return os.environ[pdef.base_url_env_var].rstrip("/")
+                if pdef.base_url:
+                    return pdef.base_url.rstrip("/")
+        except Exception:
             pass
         return None
 
-    def _resolve_key(self, provider: str) -> Optional[str]:
+    @staticmethod
+    def _resolve_key(provider: str) -> Optional[str]:
+        """Resolve API key via Hermes's provider system."""
         import os
-        for k in ("CUSTOM_API_KEY", "OPENAI_API_KEY"):
-            if os.environ.get(k):
-                return os.environ[k]
         try:
-            from hermes_cli.auth import PROVIDER_REGISTRY
-            cfg = PROVIDER_REGISTRY.get(provider)
-            if cfg and cfg.api_key_env_vars:
-                for ev in cfg.api_key_env_vars:
-                    if os.environ.get(ev):
-                        return os.environ[ev]
-        except ImportError:
+            from hermes_cli.providers import resolve_provider_full
+            pdef = resolve_provider_full(provider)
+            if pdef and pdef.api_key_env_vars:
+                for env_var in pdef.api_key_env_vars:
+                    val = os.environ.get(env_var, "")
+                    if val:
+                        return val
+        except Exception:
             pass
         return None
 
@@ -242,25 +323,6 @@ class WikiBuilder:
         return {"title": title or "Untitled", "language": "en", "quality": 2,
                 "content_type": "discussion", "topics": [], "entities": [], "keywords": [],
                 "result": "", "background": "", "decisions": [], "problems": []}
-
-    def _update_topic(self, topic: str, date: str, title: str, quality: int) -> None:
-        existing = self._store.get_topic_page(topic)
-        h = _I18N["en"]
-        if existing:
-            content = existing.get("full_content") or ""
-            entry = f"- [{date}] {title} - quality: {quality}"
-            if entry not in content:
-                self._store.update_page_content(
-                    existing["page_id"],
-                    content.replace(f"## {h['tl']}\n", f"## {h['tl']}\n{entry}\n"),
-                )
-        else:
-            page = (
-                f"---\ntopic: {topic}\npage_count: 1\nfirst_seen: {date}\nlast_updated: {date}\n---\n\n"
-                f"# {topic}\n\n## {h['ov']}\n\n## {h['tl']}\n- [{date}] {title} - quality: {quality}\n"
-            )
-            self._store.insert_page(page_type="topic", slug=topic, title=topic, date=date,
-                                    topics=[topic], summary=f"Topic: {topic}", full_content=page)
 
     def _build_page(self, **kw) -> str:
         lang = kw.get("language", "en")
