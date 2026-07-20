@@ -7,7 +7,9 @@
 ## 설치
 
 ```bash
-git clone https://github.com/eiritsu/hermes-wiki-plugin.git ~/.hermes/plugins/hermes_wiki
+git clone https://github.com/eiritsu/hermes-wiki-plugin.git /tmp/hermes-wiki-plugin
+cd /tmp/hermes-wiki-plugin
+bash install.sh
 ```
 
 `~/.hermes/config.yaml`에 `hermes-wiki` 추가:

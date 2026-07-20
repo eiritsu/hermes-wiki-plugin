@@ -7,8 +7,12 @@
 ## 安装
 
 ```bash
-git clone https://github.com/eiritsu/hermes-wiki-plugin.git ~/.hermes/plugins/hermes_wiki
+git clone https://github.com/eiritsu/hermes-wiki-plugin.git /tmp/hermes-wiki-plugin
+cd /tmp/hermes-wiki-plugin
+bash install.sh
 ```
+
+安装脚本会将后端安装到 `~/.hermes/plugins/hermes_wiki/`，将 Desktop Wiki GUI 安装到 `~/.hermes/desktop-plugins/hermes-wiki/`。
 
 编辑 `~/.hermes/config.yaml`，将 `hermes-wiki` 添加到插件列表：
 
@@ -37,13 +41,14 @@ plugins:
             → 提取 facts 到 fact_store
 ```
 
-插件首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue`），无需手动建表。
+插件首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue`、`hermes_wiki_session_state`），无需手动建表。
 
 ## 触发条件
 
 | 场景 | 是否触发 wiki 生成 |
 |------|-------------------|
 | 正常对话结束 | ✅ 是 |
+| 已有 session 新增消息 | ✅ 每 5 分钟增量扫描后重建 |
 | 切换 session | ✅ 是 |
 | 重置 session | ✅ 是 |
 | Cron job session | ❌ 跳过 |
@@ -87,22 +92,22 @@ Hermes：[调用 wiki_search(query='nginx')]
 ```bash
 # 列出所有 wiki 页面
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT title, quality, date, topics FROM wiki_pages WHERE page_type='session' ORDER BY date DESC"
+  "SELECT title, quality, date, topics FROM hermes_wiki_pages WHERE page_type='session' ORDER BY date DESC"
 
 # 按关键词搜索
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT title, summary FROM wiki_pages WHERE title LIKE '%关键词%' OR summary LIKE '%关键词%'"
+  "SELECT title, summary FROM hermes_wiki_pages WHERE title LIKE '%关键词%' OR summary LIKE '%关键词%'"
 
 # 检查待处理队列
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT COUNT(*) FROM wiki_pending_queue WHERE status='pending'"
+  "SELECT COUNT(*) FROM hermes_wiki_pending_queue WHERE status='pending'"
 ```
 
 ### 验证插件是否生效
 
 1. 查看 Hermes 日志中是否有：`hermes-wiki: standalone mode` 或 `hermes-wiki: extension mode`
-2. 几次对话后查询：`sqlite3 ~/.hermes/memory_store.db "SELECT COUNT(*) FROM wiki_pages"`
-3. 使用 `wiki_search` 工具（独立模式）或 `fact_store(action='search')`（扩展模式）搜索 wiki 内容
+2. 几次对话后查询：`sqlite3 ~/.hermes/memory_store.db "SELECT COUNT(*) FROM hermes_wiki_pages"`
+3. 使用 Desktop Wiki 侧栏、`wiki_search` 工具（独立模式）或 `fact_store(action='search')`（扩展模式）搜索 wiki 内容
 
 ## 功能特性
 
@@ -149,12 +154,17 @@ Container networking resolved, reverse proxy configured
 
 ## 架构
 
-```
-hermes_wiki/
-├── __init__.py      — 双模式入口 + hook 注册
-├── wiki_store.py    — SQLite 表（wiki_pages, wiki_pending_queue）+ 队列 + 搜索
-├── wiki_builder.py  — LLM 分析 + wiki 页面生成 + 7 语言 i18n
-└── plugin.yaml      — 插件元数据
+```text
+hermes-wiki-plugin/
+├── backend/
+│   ├── __init__.py          — 双模式入口、hooks、每 5 分钟增量扫描
+│   ├── wiki_store.py        — SQLite 队列、重试、session state、页面存储
+│   ├── wiki_builder.py      — LLM 分析与 wiki 页面生成
+│   ├── wiki_rpc.py          — Desktop GUI 的 Gateway RPC 方法
+│   ├── plugin.yaml          — 插件元数据
+│   └── prompts/default.md   — 分析提示词
+├── desktop/plugin.js         — Hermes Desktop Wiki 侧栏 GUI
+└── install.sh                — 同时安装后端和 Desktop 组件
 ```
 
 ## 故障排除

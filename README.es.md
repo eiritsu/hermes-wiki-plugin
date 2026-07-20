@@ -7,7 +7,9 @@ Plugin Karpathy LLM Wiki para [Hermes Agent](https://github.com/NousResearch/her
 ## Instalación
 
 ```bash
-git clone https://github.com/eiritsu/hermes-wiki-plugin.git ~/.hermes/plugins/hermes_wiki
+git clone https://github.com/eiritsu/hermes-wiki-plugin.git /tmp/hermes-wiki-plugin
+cd /tmp/hermes-wiki-plugin
+bash install.sh
 ```
 
 Añade `hermes-wiki` en `~/.hermes/config.yaml`:

@@ -7,8 +7,12 @@ Karpathy LLM Wiki pattern for [Hermes Agent](https://github.com/NousResearch/her
 ## Installation
 
 ```bash
-git clone https://github.com/eiritsu/hermes-wiki-plugin.git ~/.hermes/plugins/hermes_wiki
+git clone https://github.com/eiritsu/hermes-wiki-plugin.git /tmp/hermes-wiki-plugin
+cd /tmp/hermes-wiki-plugin
+bash install.sh
 ```
+
+The installer places the backend in `~/.hermes/plugins/hermes_wiki/` and the Desktop GUI plugin in `~/.hermes/desktop-plugins/hermes-wiki/`.
 
 Then edit `~/.hermes/config.yaml` — add `hermes-wiki` to the plugins list:
 
@@ -39,13 +43,14 @@ You chat with Hermes
             → Extracts facts into fact_store
 ```
 
-The plugin auto-creates its SQLite tables (`hermes_wiki_pages`, `hermes_wiki_pending_queue`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
+The plugin auto-creates its SQLite tables (`hermes_wiki_pages`, `hermes_wiki_pending_queue`, and `hermes_wiki_session_state`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
 
 ## Trigger Conditions
 
 | Scenario | Triggers wiki generation? |
 |----------|--------------------------|
 | Normal conversation ends | ✅ Yes |
+| Existing session gains messages | ✅ Rebuilt by the 5-minute incremental scan |
 | Switch session | ✅ Yes |
 | Reset session | ✅ Yes |
 | Cron job session | ❌ Skipped |
@@ -89,22 +94,22 @@ Hermes: [calls wiki_search(query='nginx')]
 ```bash
 # List all wiki pages
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT title, quality, date, topics FROM wiki_pages WHERE page_type='session' ORDER BY date DESC"
+  "SELECT title, quality, date, topics FROM hermes_wiki_pages WHERE page_type='session' ORDER BY date DESC"
 
 # Search by keyword
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT title, summary FROM wiki_pages WHERE title LIKE '%nginx%' OR summary LIKE '%nginx%'"
+  "SELECT title, summary FROM hermes_wiki_pages WHERE title LIKE '%nginx%' OR summary LIKE '%nginx%'"
 
 # Check pending queue
 sqlite3 ~/.hermes/memory_store.db \
-  "SELECT COUNT(*) FROM wiki_pending_queue WHERE status='pending'"
+  "SELECT COUNT(*) FROM hermes_wiki_pending_queue WHERE status='pending'"
 ```
 
 ### Verifying the Plugin is Active
 
 1. Check Hermes logs for: `hermes-wiki: standalone mode` or `hermes-wiki: extension mode`
-2. After a few conversations, query: `sqlite3 ~/.hermes/memory_store.db "SELECT COUNT(*) FROM wiki_pages"`
-3. Use `wiki_search` tool (standalone mode) or `fact_store(action='search')` (extension mode) to find wiki content
+2. After a few conversations, query: `sqlite3 ~/.hermes/memory_store.db "SELECT COUNT(*) FROM hermes_wiki_pages"`
+3. Use the Desktop Wiki sidebar, `wiki_search` (standalone mode), or `fact_store(action='search')` (extension mode) to find wiki content
 
 ## Features
 
@@ -151,12 +156,17 @@ Container networking resolved, reverse proxy configured
 
 ## Architecture
 
-```
-hermes_wiki/
-├── __init__.py      — Dual-mode entry point, hook registration
-├── wiki_store.py    — SQLite tables (wiki_pages, wiki_pending_queue) + queue + search
-├── wiki_builder.py  — LLM analysis + wiki page generation + 7-language i18n
-└── plugin.yaml      — Plugin metadata
+```text
+hermes-wiki-plugin/
+├── backend/
+│   ├── __init__.py          — dual-mode entry point, hooks, 5-minute incremental scan
+│   ├── wiki_store.py        — SQLite queue, retry, session state, and page storage
+│   ├── wiki_builder.py      — LLM analysis and wiki page generation
+│   ├── wiki_rpc.py          — Gateway RPC methods for the Desktop GUI
+│   ├── plugin.yaml          — plugin metadata
+│   └── prompts/default.md   — analysis prompt
+├── desktop/plugin.js         — Hermes Desktop Wiki sidebar GUI
+└── install.sh                — installs backend and Desktop components
 ```
 
 ## Troubleshooting
