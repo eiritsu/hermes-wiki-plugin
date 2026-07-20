@@ -81,13 +81,16 @@ class WikiBuilder:
             logger.debug("hermes-wiki: cleanup failed: %s", e)
 
     def _process_session(self, item: dict) -> None:
-        session_id = item["session_id"]
+        queue_key = item["session_id"]  # sid:date format
+        original_sid = item.get("original_session_id") or queue_key
         title = item.get("title", "") or ""
         source = item.get("source", "")
         messages = item.get("messages", [])
         source_message_count = int(item.get("message_count") or len(messages))
+        date = item.get("latest_date") or self._date_from_id(original_sid)
 
-        if self._store.is_session_processed(session_id) and source_message_count <= self._store.session_message_count(session_id):
+        # Check if this date segment is already processed with same or more messages
+        if self._store.is_date_processed(queue_key) and source_message_count <= self._store.date_message_count(queue_key):
             return
 
         filtered = []
@@ -110,7 +113,6 @@ class WikiBuilder:
         if analysis is None:
             raise RuntimeError("LLM returned no usable wiki analysis")
         quality = max(1, min(5, analysis.get("quality", 2)))
-        date = item.get("latest_date") or self._date_from_id(session_id)
         slug = self._slug(date, analysis.get("title", title))
         lang = analysis.get("language", "en")
         topics = analysis.get("topics", [])
@@ -134,7 +136,7 @@ class WikiBuilder:
             full_content = llm_content
         else:
             full_content = self._build_page(
-                session_id=session_id, date=date, title=analysis.get("title", title),
+                session_id=original_sid, date=date, title=analysis.get("title", title),
                 language=lang, quality=quality, content_type=analysis.get("content_type", "discussion"),
                 topics=topics, entities=entities, keywords=keywords,
                 result=analysis.get("result", ""), background=analysis.get("background", ""),
@@ -147,18 +149,17 @@ class WikiBuilder:
             content_type=analysis.get("content_type", "discussion"),
             topics=topics, entities=entities, keywords=keywords,
             summary=(analysis.get("result", "") or analysis.get("background", ""))[:200],
-            full_content=full_content, source_session_id=session_id,
+            full_content=full_content, source_session_id=original_sid,
             message_count=source_message_count,
         )
 
         if quality < 4:
-            # Record the attempted revision so periodic scans do not endlessly requeue it.
-            self._store.delete_low_quality_session_page(session_id)
-            self._store.record_session_state(session_id, source_message_count, quality)
-            logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", session_id, quality)
+            self._store.delete_low_quality_session_page(original_sid)
+            self._store.record_session_state(queue_key, source_message_count, quality)
+            logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", queue_key, quality)
             return
 
-        self._store.record_session_state(session_id, source_message_count, quality)
+        self._store.record_session_state(queue_key, source_message_count, quality)
         logger.info("hermes-wiki: %s (q=%d, topics=%s)", slug, quality, topics)
 
     # -- LLM call -----------------------------------------------------------

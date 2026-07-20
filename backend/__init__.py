@@ -11,6 +11,7 @@ Trigger strategy:
   - First load: full batch of all historical sessions
 """
 
+import datetime
 import json
 import logging
 import sqlite3
@@ -48,7 +49,7 @@ WIKI_SEARCH_SCHEMA = {
 # ── Session end hook ────────────────────────────────────────────────────
 
 def _on_session_end(messages: List[Dict[str, Any]], **kwargs) -> None:
-    """Hook: enqueue session for wiki processing (non-blocking)."""
+    """Hook: enqueue session for wiki processing (non-blocking), date-segmented."""
     global _wiki_store, _wiki_builder
     if not _wiki_store or not _wiki_builder or not messages or len(messages) < 2:
         return
@@ -58,10 +59,30 @@ def _on_session_end(messages: List[Dict[str, Any]], **kwargs) -> None:
         return
 
     try:
-        _wiki_store.enqueue(
-            session_id=session_id, messages=messages,
-            title=kwargs.get("title", ""), source=kwargs.get("source", ""),
-        )
+        # Group messages by date
+        from collections import OrderedDict
+        date_msgs: OrderedDict = OrderedDict()
+        for msg in messages:
+            ts = msg.get("timestamp", 0)
+            if ts:
+                d = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            else:
+                d = datetime.date.today().isoformat()
+            date_msgs.setdefault(d, []).append(msg)
+
+        title = kwargs.get("title", "")
+        source = kwargs.get("source", "")
+
+        for date_str, msgs in date_msgs.items():
+            if len(msgs) < 2:
+                continue
+            queue_key = f"{session_id}:{date_str}"
+            latest_ts = max(m.get("timestamp", 0) for m in msgs if m.get("timestamp"))
+            _wiki_store.enqueue(
+                queue_key, msgs, title, source,
+                latest_message_at=latest_ts if latest_ts else None,
+                original_session_id=session_id,
+            )
         _schedule_worker()
     except Exception as e:
         logger.debug("hermes-wiki: enqueue failed: %s", e)
@@ -93,13 +114,12 @@ def _batch_scan() -> None:
                LIMIT 50""",
         ).fetchall()
 
-        # Read messages for each session and compare the same user/assistant
-        # count that is persisted in hermes_wiki_session_state.
+        # Read messages for each session, group by date, enqueue per-date segments.
         enqueued = 0
         for sess in sessions:
             sid = sess["id"]
 
-            # Check queue too (pending but not yet processed)
+            # Skip if any pending items exist for this session
             pending_rows = _wiki_store._conn.execute(
                 "SELECT 1 FROM hermes_wiki_pending_queue WHERE session_id = ? AND status IN ('pending', 'processing')",
                 (sid,),
@@ -117,16 +137,42 @@ def _batch_scan() -> None:
                 (sid,),
             ).fetchall()
 
-            messages = [{"role": r["role"], "content": r["content"] or ""} for r in msg_rows]
-            current_count = len(messages)
-            if current_count < 2:
-                continue
-            if _wiki_store.is_session_processed(sid) and current_count <= _wiki_store.session_message_count(sid):
+            if len(msg_rows) < 2:
                 continue
 
-            latest_ts = max(r["timestamp"] for r in msg_rows) if msg_rows else None
-            _wiki_store.enqueue(sid, messages, title, source, message_count=current_count, latest_message_at=latest_ts)
-            enqueued += 1
+            # Group messages by date
+            from collections import OrderedDict
+            date_msgs = OrderedDict()
+            for r in msg_rows:
+                d = datetime.datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d")
+                date_msgs.setdefault(d, []).append(r)
+
+            today = datetime.date.today().isoformat()
+
+            for date_str, msgs in date_msgs.items():
+                queue_key = f"{sid}:{date_str}"
+                messages = [{"role": r["role"], "content": r["content"] or ""} for r in msgs]
+                msg_count = len(messages)
+                if msg_count < 2:
+                    continue
+
+                # For historical dates, skip if already processed with same or more messages
+                if date_str != today:
+                    if _wiki_store.is_date_processed(queue_key) and msg_count <= _wiki_store.date_message_count(queue_key):
+                        continue
+
+                # For today, skip if message count hasn't grown
+                if date_str == today:
+                    if _wiki_store.is_date_processed(queue_key) and msg_count <= _wiki_store.date_message_count(queue_key):
+                        continue
+
+                latest_ts = max(r["timestamp"] for r in msgs)
+                _wiki_store.enqueue(
+                    queue_key, messages, title, source,
+                    message_count=msg_count, latest_message_at=latest_ts,
+                    original_session_id=sid,
+                )
+                enqueued += 1
 
         state_db.close()
 
@@ -194,7 +240,7 @@ def _worker() -> None:
 
 # ── Tool handlers ──────────────────────────────────────────────────────
 
-def _handle_wiki_search(args: dict) -> str:
+def _handle_wiki_search(args: dict, **kwargs) -> str:
     global _wiki_store
     if not _wiki_store:
         return json.dumps({"error": "Wiki store not initialized"})
@@ -270,7 +316,7 @@ def register(ctx) -> None:
         _wiki_store = WikiStore()
         ctx.register_tool(
             name="wiki_search",
-            toolset="hermes-wiki",
+            toolset="memory",
             schema=WIKI_SEARCH_SCHEMA,
             handler=_handle_wiki_search,
         )

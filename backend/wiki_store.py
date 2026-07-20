@@ -146,6 +146,7 @@ class WikiStore:
             ("next_retry_at", "TIMESTAMP"),
             ("last_error", "TEXT"),
             ("latest_date", "TEXT"),
+            ("original_session_id", "TEXT"),
         ):
             if name not in queue_columns:
                 self._conn.execute(f"ALTER TABLE hermes_wiki_pending_queue ADD COLUMN {name} {definition}")
@@ -161,6 +162,7 @@ class WikiStore:
         source: str = "",
         message_count: Optional[int] = None,
         latest_message_at: Optional[float] = None,
+        original_session_id: str = "",
     ) -> int:
         messages_json = json.dumps(messages, ensure_ascii=False)
         source_count = len(messages) if message_count is None else int(message_count)
@@ -178,9 +180,9 @@ class WikiStore:
                 return int(active[0])
             cur = self._conn.execute(
                 """INSERT INTO hermes_wiki_pending_queue
-                   (session_id, title, source, message_count, messages_json, latest_date, status)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
-                (session_id, title, source, source_count, messages_json, latest_date),
+                   (session_id, title, source, message_count, messages_json, latest_date, original_session_id, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (session_id, title, source, source_count, messages_json, latest_date, original_session_id),
             )
             self._conn.commit()
             return cur.lastrowid  # type: ignore[return-value]
@@ -188,7 +190,7 @@ class WikiStore:
     def dequeue(self, limit: int = 1) -> list:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT id, session_id, title, source, message_count, messages_json, latest_date
+                """SELECT id, session_id, title, source, message_count, messages_json, latest_date, original_session_id
                    FROM hermes_wiki_pending_queue
                    WHERE status = 'pending'
                      AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
@@ -288,6 +290,25 @@ class WikiStore:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    def is_date_processed(self, queue_key: str) -> bool:
+        """Check if a session:date segment has been processed (queue_key = sid:date)."""
+        if not queue_key:
+            return False
+        row = self._conn.execute(
+            "SELECT 1 FROM hermes_wiki_session_state WHERE session_id = ?", (queue_key,)
+        ).fetchone()
+        return row is not None
+
+    def date_message_count(self, queue_key: str) -> int:
+        """Get message count for a session:date segment (queue_key = sid:date)."""
+        if not queue_key:
+            return 0
+        row = self._conn.execute(
+            "SELECT message_count FROM hermes_wiki_session_state WHERE session_id = ?",
+            (queue_key,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
     def record_session_state(self, session_id: str, message_count: int, quality: int) -> None:
         with self._lock:
             self._conn.execute(
@@ -360,9 +381,9 @@ class WikiStore:
             rows = self._conn.execute(
                 """SELECT slug, page_type, title, date, quality, summary, topics
                    FROM hermes_wiki_pages
-                   WHERE title LIKE ? OR summary LIKE ? OR topics LIKE ? OR keywords LIKE ?
+                   WHERE title LIKE ? OR summary LIKE ? OR topics LIKE ? OR keywords LIKE ? OR date LIKE ?
                    LIMIT ?""",
-                (q, q, q, q, limit),
+                (q, q, q, q, q, limit),
             ).fetchall()
             return [dict(r) for r in rows]
 

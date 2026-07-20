@@ -228,13 +228,35 @@ def wiki_batch_process(rid, params):
                 "ORDER BY timestamp ASC",
                 (sid,),
             ).fetchall()
-            messages = [{"role": r["role"], "content": r["content"] or ""} for r in msg_rows]
-            if len(messages) < 2:
+            if len(msg_rows) < 2:
                 continue
-            latest_ts = max(r["timestamp"] for r in msg_rows) if msg_rows else None
-            queue_id = ws.enqueue(sid, messages, sess["title"] or "", sess["source"] or "", latest_message_at=latest_ts)
-            if queue_id:
-                enqueued += 1
+
+            # Group messages by date
+            import datetime
+            from collections import OrderedDict
+            date_msgs = OrderedDict()
+            for r in msg_rows:
+                d = datetime.datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d")
+                date_msgs.setdefault(d, []).append(r)
+
+            today = datetime.date.today().isoformat()
+
+            for date_str, msgs in date_msgs.items():
+                queue_key = f"{sid}:{date_str}"
+                messages = [{"role": r["role"], "content": r["content"] or ""} for r in msgs]
+                msg_count = len(messages)
+                if msg_count < 2:
+                    continue
+                if ws.is_date_processed(queue_key) and msg_count <= ws.date_message_count(queue_key):
+                    continue
+                latest_ts = max(r["timestamp"] for r in msgs)
+                queue_id = ws.enqueue(
+                    queue_key, messages, sess["title"] or "", sess["source"] or "",
+                    message_count=msg_count, latest_message_at=latest_ts,
+                    original_session_id=sid,
+                )
+                if queue_id:
+                    enqueued += 1
         state_db.close()
 
         from hermes_wiki.wiki_builder import WikiBuilder
