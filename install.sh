@@ -58,22 +58,34 @@ if [ -f "$CONFIG" ]; then
     echo ""
     echo "  Add 'hermes-wiki' to plugins.enabled in $CONFIG"
   fi
-  # Enable hermes-wiki toolset so wiki_search is available to the agent
+  # Ensure wiki toolset is enabled so wiki_search is available to the agent
   python3 -c "
 import yaml
 cfg_path = '$CONFIG'
 with open(cfg_path) as f:
     cfg = yaml.safe_load(f) or {}
 toolsets = cfg.get('toolsets', [])
-if isinstance(toolsets, list) and 'hermes-wiki' not in toolsets:
-    toolsets.append('hermes-wiki')
+changed = False
+# Add wiki toolset (plugin-provided, contains wiki_search)
+if isinstance(toolsets, list) and 'wiki' not in toolsets:
+    toolsets.append('wiki')
+    changed = True
+# Remove hermes-wiki if present (triggers platform adapter bug, not a real toolset)
+if isinstance(toolsets, list) and 'hermes-wiki' in toolsets:
+    toolsets.remove('hermes-wiki')
+    changed = True
+# Remove memory if we previously added it (wiki_search is no longer there)
+if isinstance(toolsets, list) and 'memory' in toolsets and 'memory' not in ('hermes-cli',):
+    # Only remove if it was added by us (not by user intentionally)
+    pass  # keep memory — user may have other reasons
+if changed:
     cfg['toolsets'] = toolsets
     with open(cfg_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-    print('  Enabled hermes-wiki toolset (wiki_search available)')
+    print('  Enabled wiki toolset (wiki_search available)')
 else:
-    print('  hermes-wiki toolset already enabled')
-" 2>/dev/null || echo "  (toolset config skipped — manual: hermes tools enable hermes-wiki)"
+    print('  wiki toolset already enabled')
+" 2>/dev/null || echo "  (toolset config skipped — manual: add 'wiki' to toolsets in config.yaml)"
 fi
 
 echo ""

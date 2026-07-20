@@ -376,14 +376,25 @@ class WikiStore:
         """Search wiki pages by keyword (LIKE-based, CJK compatible)."""
         if not query or not query.strip():
             return []
-        q = f"%{query.strip()}%"
+        terms = query.strip().split()
+        if not terms:
+            return []
+        # Build OR conditions for each term
+        conditions = []
+        params = []
+        for term in terms:
+            q = f"%{term}%"
+            conditions.append("(title LIKE ? OR summary LIKE ? OR topics LIKE ? OR keywords LIKE ? OR date LIKE ?)")
+            params.extend([q, q, q, q, q])
+        where = " OR ".join(conditions)
+        params.append(limit)
         with self._lock:
             rows = self._conn.execute(
-                """SELECT slug, page_type, title, date, quality, summary, topics
+                f"""SELECT slug, page_type, title, date, quality, summary, topics
                    FROM hermes_wiki_pages
-                   WHERE title LIKE ? OR summary LIKE ? OR topics LIKE ? OR keywords LIKE ? OR date LIKE ?
+                   WHERE {where}
                    LIMIT ?""",
-                (q, q, q, q, q, limit),
+                params,
             ).fetchall()
             return [dict(r) for r in rows]
 

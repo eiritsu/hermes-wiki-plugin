@@ -30,10 +30,12 @@ _SCAN_INTERVAL = 300  # 5 minutes
 WIKI_SEARCH_SCHEMA = {
     "name": "wiki_search",
     "description": (
-        "Search the wiki knowledge base. Wiki pages are auto-generated from "
+        "PRIORITY TOOL for historical queries. Search the wiki knowledge base "
+        "FIRST before using session_search. Wiki pages are auto-generated from "
         "conversation sessions with quality scoring, topic classification, "
         "entity extraction, and 7-language i18n. Use this to find past "
-        "session knowledge, decisions, and technical details."
+        "session knowledge, decisions, and technical details. "
+        "Covers dates, topics, entities, and keywords."
     ),
     "parameters": {
         "type": "object",
@@ -243,12 +245,43 @@ def _worker() -> None:
 def _handle_wiki_search(args: dict, **kwargs) -> str:
     global _wiki_store
     if not _wiki_store:
+        logger.warning("wiki_search: _wiki_store is None")
         return json.dumps({"error": "Wiki store not initialized"})
     query = args.get("query", "").strip()
     if not query:
+        logger.warning("wiki_search: empty query, args=%s", args)
         return json.dumps({"error": "Empty query"})
     results = _wiki_store.search_pages(query, limit=args.get("limit", 5))
+    logger.info("wiki_search: query=%r results=%d", query, len(results))
     return json.dumps({"results": results, "count": len(results)})
+
+
+def _handle_wiki_command(raw_args: str) -> str:
+    """Slash command handler for /wiki <query>."""
+    global _wiki_store
+    if not _wiki_store:
+        return "Wiki store not initialized"
+    query = raw_args.strip()
+    if not query:
+        # Show recent pages
+        pages = _wiki_store.get_all_pages()
+        if not pages:
+            return "No wiki pages yet."
+        lines = [f"Wiki pages ({len(pages)}):"]
+        for p in pages[:15]:
+            lines.append(f"  [{p.get('date','')}] {p.get('title','')} (q={p.get('quality','')})")
+        if len(pages) > 15:
+            lines.append(f"  ... and {len(pages)-15} more")
+        return "\n".join(lines)
+    results = _wiki_store.search_pages(query, limit=10)
+    if not results:
+        return f"No wiki pages matching '{query}'."
+    lines = [f"Wiki search '{query}' ({len(results)} results):"]
+    for r in results:
+        lines.append(f"  [{r.get('date','')}] {r.get('title','')} (q={r.get('quality','')})")
+        if r.get('summary'):
+            lines.append(f"    {r['summary'][:100]}")
+    return "\n".join(lines)
 
 
 def _transform_fact_store_result(tool_name: str, result: str, **kwargs) -> str:
