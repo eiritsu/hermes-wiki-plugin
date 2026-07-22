@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# Install artifacts (copies from backend/)
+/__init__.py
+/plugin.yaml
+/wiki_builder.py
+/wiki_rpc.py
+/wiki_store.py
+/prompts/

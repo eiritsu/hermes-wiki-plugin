@@ -31,9 +31,10 @@ _I18N = {
 class WikiBuilder:
     """Process pending sessions into wiki pages via LLM analysis."""
 
-    def __init__(self, store, config: dict = None):
+    def __init__(self, store, config: dict = None, fact_store=None):
         self._store = store
         self._config = config or {}
+        self._fact_store = fact_store  # Optional MemoryStore for fact extraction
 
     def process_pending(self) -> int:
         processed = 0
@@ -159,8 +160,37 @@ class WikiBuilder:
             logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", queue_key, quality)
             return
 
+        # Extract facts to holographic memory (extension mode only)
+        facts = analysis.get("facts", [])
+        if facts and self._fact_store:
+            self._extract_facts(facts, original_sid)
+
         self._store.record_session_state(queue_key, source_message_count, quality)
-        logger.info("hermes-wiki: %s (q=%d, topics=%s)", slug, quality, topics)
+        logger.info("hermes-wiki: %s (q=%d, topics=%s, facts=%d)", slug, quality, topics, len(facts))
+
+    # -- Fact extraction to holographic memory ----------------------------
+
+    def _extract_facts(self, facts: list, session_id: str) -> None:
+        """Write LLM-extracted facts to holographic fact_store."""
+        if not self._fact_store:
+            return
+        for f in facts:
+            content = (f.get("content") or "").strip()
+            if not content or len(content) < 10:
+                continue
+            category = f.get("category", "general")
+            if category not in ("tool", "project", "user_pref", "general"):
+                category = "general"
+            tags = f.get("tags", "")
+            try:
+                fact_id = self._fact_store.add_fact(
+                    content=content,
+                    category=category,
+                    tags=tags,
+                )
+                logger.debug("hermes-wiki: fact #%d: %s...", fact_id, content[:50])
+            except Exception as e:
+                logger.debug("hermes-wiki: fact extraction failed: %s", e)
 
     # -- LLM call -----------------------------------------------------------
 

@@ -15,6 +15,14 @@ Analyze the following conversation session and return strict JSON only.
   "background": "User's goal or context (2-3 sentences)",
   "decisions": ["Decision with reasoning"],
   "problems": ["Problem -> Solution (detailed)"],
+  "facts": [
+    {
+      "content": "Declarative fact statement (e.g. 'Tool X requires flag Y for Z to work')",
+      "category": "tool|project|user_pref|general",
+      "entities": ["Entity1", "Entity2"],
+      "tags": "comma-separated,lowercase"
+    }
+  ],
   "full_content": "Complete Obsidian wiki page (see format below)"
 }
 ```
@@ -78,4 +86,13 @@ Summary of what was accomplished and its impact.
 
 6. **entities**: Named things that matter — tools, systems, people, services. Example: `Docker Compose`, `nginx`, `Cloudflare WARP`
 
-7. **Skip**: If the session is mostly personal data editing (resume, personal documents) with no transferable technical knowledge, set quality=1 and keep full_content minimal.
+7. **facts**: Extract reusable knowledge as declarative facts. Only include facts with lasting value:
+   - Tool behavior quirks ("X requires Y flag for Z")
+   - Configuration gotchas ("Setting A conflicts with B")
+   - User preferences ("User prefers concise responses")
+   - Workflow discoveries ("Approach X outperforms Y for Z scenario")
+   - DO NOT include: temporary task state, one-time commands, personal data
+   - Each fact must be self-contained and understandable without context
+   - 0-5 facts per session. If nothing reusable, return empty array.
+
+8. **Skip**: If the session is mostly personal data editing (resume, personal documents) with no transferable technical knowledge, set quality=1 and keep full_content minimal. facts should be empty.

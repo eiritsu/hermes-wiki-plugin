@@ -344,9 +344,15 @@ def register(ctx) -> None:
         logger.info("hermes-wiki: extension mode (holographic detected)")
         _wiki_store = WikiStore(conn=holographic_conn, lock=holographic_lock)
         ctx.register_hook("transform_tool_result", _transform_fact_store_result)
+        # Create MemoryStore for fact extraction (reuses shared connection)
+        try:
+            _fact_store = HoloStore()
+        except Exception:
+            _fact_store = None
     else:
         logger.info("hermes-wiki: standalone mode")
         _wiki_store = WikiStore()
+        _fact_store = None
         ctx.register_tool(
             name="wiki_search",
             toolset="memory",
@@ -354,7 +360,7 @@ def register(ctx) -> None:
             handler=_handle_wiki_search,
         )
 
-    _wiki_builder = WikiBuilder(_wiki_store)
+    _wiki_builder = WikiBuilder(_wiki_store, fact_store=_fact_store)
 
     # Register session end hook (immediate processing)
     ctx.register_hook("on_session_end", _on_session_end)
