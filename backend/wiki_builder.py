@@ -337,6 +337,12 @@ class WikiBuilder:
                         return val
         except Exception:
             pass
+        # Fallback: try provider-specific env var pattern
+        # e.g., opencode-zen -> OPENCODE_ZEN_API_KEY
+        fallback_var = f"{provider.upper().replace('-', '_')}_API_KEY"
+        val = os.environ.get(fallback_var, "")
+        if val:
+            return val
         return None
 
     # -- Defaults & helpers -------------------------------------------------

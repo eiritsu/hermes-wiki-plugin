@@ -25,7 +25,7 @@ _wiki_builder = None
 _wiki_thread = None
 _wiki_thread_lock = threading.Lock()
 _scan_timer = None
-_SCAN_INTERVAL = 300  # 5 minutes
+_SCAN_INTERVAL = 3600  # 1 hour
 
 WIKI_SEARCH_SCHEMA = {
     "name": "wiki_search",
