@@ -4,6 +4,38 @@
 
 Karpathy LLM Wiki pattern for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — automatic session-to-wiki conversion with quality scoring, topic classification, entity extraction, and 7-language i18n.
 
+## Why This Exists
+
+Hermes generates valuable conversations every day — debugging sessions, decision discussions, problem-solving, idea exploration. But this knowledge has three problems:
+
+- **Knowledge sinks when the session ends.** Next time you face a similar problem, you remember "I dealt with something like this before" but can't recall the details. `session_search` can find raw conversations, but the results are noisy and fragmented.
+- **No structured accumulation.** Conversations are linear chat logs, not documents organized by topic, decision, and outcome.
+- **Cross-session knowledge can't connect.** The same topic discussed across different sessions, or different phases of the same project, can't be linked together.
+
+## What It Does
+
+The plugin automatically calls your LLM at the end of each session, distilling conversations into structured wiki pages:
+
+- **Quality scoring** (1-5): Automatically filters noise, keeping only valuable sessions
+- **Topic classification + entity extraction**: Automatically identifies "what this conversation was about"
+- **Key decisions and problem resolution**: Extracts "what decisions were made, why, and how problems were solved"
+- **Fact extraction**: Reusable knowledge (tool quirks, gotchas, workflow discoveries) is written to long-term memory, directly hittable by future searches
+- **7-language support**: Wiki pages are generated in the same language as the conversation
+
+## Use Cases
+
+**Daily conversations build a knowledge base**
+Whether asking technical questions, discussing work plans, or exploring new ideas, each conversation automatically generates a structured summary. Over time, the wiki becomes a knowledge base co-built by you and Hermes.
+
+**Troubleshooting leaves traces**
+Encountering errors, investigating root causes, finding solutions — this process automatically crystallizes into wiki pages. Next time a similar issue arises, searching the wiki is much faster than scrolling through chat history.
+
+**Decision history is traceable**
+Discussing approaches, comparing options, making decisions — the thinking process is automatically archived. When reviewing later, you can clearly see "why we chose this approach."
+
+**Personal preferences and experience accumulate**
+Through fact extraction, your work habits,常用 tools, and past pitfalls automatically build up in long-term memory. The more you use Hermes, the better it understands you.
+
 ## Installation
 
 ```bash
@@ -33,29 +65,30 @@ The plugin uses whatever LLM you already configured in Hermes (`model.default` /
 
 ```
 You chat with Hermes
-  → Session ends (switch topic / reset / close)
-    → on_session_end hook fires (milliseconds, non-blocking)
-      → Session messages queued in SQLite
-        → Background daemon thread starts
-          → Calls your configured LLM (from config.yaml)
-            → Analyzes: quality score / language / topics / entities / decisions
-            → Writes structured wiki page to SQLite
-            → Extracts facts into fact_store
+  → Session ends (close / switch topic / reset)
+    → on_session_end or on_session_reset hook fires (milliseconds, non-blocking)
+      → Session messages read from state.db if not provided by hook
+        → Messages queued in SQLite (date-segmented)
+          → Background daemon thread starts
+            → Calls your configured LLM (from config.yaml)
+              → Analyzes: quality score / language / topics / entities / decisions / facts
+              → Writes structured wiki page to SQLite (quality >= 4)
+              → Extracts reusable facts into holographic memory (if active)
+  → 1-hour batch scan (catches anything the hooks missed)
 ```
 
 The plugin auto-creates its SQLite tables (`hermes_wiki_pages`, `hermes_wiki_pending_queue`, and `hermes_wiki_session_state`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
 
 ## Trigger Conditions
 
-| Scenario | Triggers wiki generation? |
-|----------|--------------------------|
-| Normal conversation ends | ✅ Yes |
-| Existing session gains messages | ✅ Rebuilt by the 5-minute incremental scan |
-| Switch session | ✅ Yes |
-| Reset session | ✅ Yes |
-| Cron job session | ❌ Skipped |
-| Subagent session | ❌ Skipped |
-| Fewer than 2 messages | ❌ Skipped |
+| Scenario | Hook | Triggers wiki generation? |
+|----------|------|--------------------------|
+| Close window / disconnect / idle timeout | `on_session_end` | ✅ Immediate |
+| Switch topic / `/new` | `on_session_reset` | ✅ Immediate |
+| Existing session gains messages | batch scan | ✅ Within 1 hour |
+| Cron job session | — | ❌ Skipped |
+| Subagent session | — | ❌ Skipped |
+| Fewer than 2 messages | — | ❌ Skipped |
 
 ## Two Modes
 
@@ -131,6 +164,8 @@ sqlite3 ~/.hermes/memory_store.db \
 - **Quality Scoring**: 1-5 scale (5=deep+important, 1=noise), low-quality sessions get minimal processing
 - **Topic Classification**: Auto-discovers topics, maintains topic aggregate pages with session timeline
 - **Entity Extraction**: Identifies key entities (people, tools, systems) from conversations
+- **Fact Extraction**: Reusable knowledge (tool quirks, gotchas, preferences) written to holographic memory — searchable via `fact_store` alongside existing facts
+- **Dual Hook Triggers**: `on_session_end` for session close + `on_session_reset` for topic switch — near-instant wiki generation
 - **Provider Resolution**: Uses Hermes's `PROVIDER_REGISTRY` — no hardcoded URLs
 - **Graceful Degradation**: Falls back to default analysis when LLM unavailable
 - **SQLite 3.31+ Compatible**: Works on Python 3.9+ (no RETURNING clause)

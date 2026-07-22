@@ -4,6 +4,38 @@ Plugin Karpathy LLM Wiki pour [Hermes Agent](https://github.com/NousResearch/her
 
 > 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
+## Pourquoi ce plugin ?
+
+Hermes génère chaque jour des conversations précieuses — sessions de débogage, discussions de décisions, résolution de problèmes, exploration d'idées. Mais ces connaissances ont trois problèmes :
+
+- **Le savoir disparaît à la fin de la session.** La prochaine fois que vous rencontrez un problème similaire, vous vous souvenez « j'ai déjà traité quelque chose comme ça » mais les détails manquent. `session_search` peut trouver les conversations brutes, mais les résultats sont bruités et fragmentés.
+- **Pas d'accumulation structurée.** Les conversations sont des journaux de chat linéaires, pas des documents organisés par sujet, décision et résultat.
+- **Le savoir ne peut pas être lié entre les sessions.** Un même sujet discuté dans différentes sessions, ou différentes phases d'un même projet, ne peuvent pas être reliés.
+
+## Ce qu'il fait
+
+Le plugin appelle automatiquement votre LLM à la fin de chaque session, distillant les conversations en pages wiki structurées :
+
+- **Notation de qualité** (1-5) : Filtre automatiquement le bruit, ne gardant que les sessions valorables
+- **Classification des sujets + extraction d'entités** : Identifie automatiquement « de quoi parlait cette conversation »
+- **Décisions clés et résolution de problèmes** : Extrait « quelles décisions ont été prises, pourquoi et comment les problèmes ont été résolus »
+- **Extraction de facts** : Les connaissances réutilisables (particularités des outils, pièges, découvertes de workflows) sont écrites en mémoire à long terme, directement trouvables lors des futures recherches
+- **Support 7 langues** : Les pages wiki sont générées dans la même langue que la conversation
+
+## Cas d'usage
+
+**Les conversations quotidiennes construissent une base de connaissances**
+Que ce soit des questions techniques, des discussions de plans de travail ou l'exploration de nouvelles idées, chaque conversation génère automatiquement un résumé structuré. Au fil du temps, le wiki devient une base de connaissances co-construite par vous et Hermes.
+
+**Le dépannage laisse des traces**
+Rencontrer des erreurs, enquêter sur les causes, trouver des solutions — ce processus se cristallise automatiquement en pages wiki. La prochaine fois qu'un problème similaire survient, chercher dans le wiki est bien plus rapide que parcourir l'historique des discussions.
+
+**L'historique des décisions est traçable**
+Discuter des approches, comparer les options, prendre des décisions — le processus de réflexion est automatiquement archivé. Lors d'une révision ultérieure, on voit clairement « pourquoi nous avons choisi cette approche ».
+
+**Les préférences et l'expérience personnelle s'accumulent**
+Grâce à l'extraction de facts, vos habitudes de travail, outils favoris et pièges passés s'accumulent automatiquement en mémoire à long terme. Plus vous utilisez Hermes, mieux il vous comprend.
+
 ## Installation
 
 ```bash

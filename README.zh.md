@@ -4,6 +4,38 @@
 
 > 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
+## 为什么需要这个插件
+
+Hermes 每天产生大量有价值的对话——调试过程、决策讨论、问题排查、想法碰撞。但这些知识存在三个问题：
+
+- **会话结束后知识就沉没了**。下次遇到类似问题，只记得"上次好像聊过"，但记不清细节。`session_search` 能搜原始对话，但噪声大、上下文碎片化。
+- **没有结构化沉淀**。对话是线性的聊天记录，不是按主题、决策、结论组织的文档。
+- **跨会话知识无法关联**。同一个话题在不同会话中的讨论、同一个项目的不同阶段，无法串联起来。
+
+## 它能做什么
+
+插件在会话结束时自动调用 LLM，把对话提炼成结构化 wiki 页面：
+
+- **质量评分**（1-5）：自动过滤噪声，只保留有价值的会话
+- **主题分类 + 实体提取**：自动识别"这个会话讨论了什么"
+- **关键决策和问题解决**：抽取"做了什么决定、为什么、怎么解决的"
+- **Fact 提取**：把可复用的知识（工具技巧、踩坑经验、个人偏好）写入长期记忆，下次搜索直接命中
+- **7 语言支持**：对话用什么语言，wiki 就生成什么语言
+
+## 使用场景
+
+**日常对话积累知识库**
+不管是问技术问题、讨论工作方案、还是探索新想法，每次对话结束自动生成结构化摘要。日积月累，wiki 就是你和 Hermes 共同构建的知识库。
+
+**问题排查留痕**
+遇到报错、排查原因、找到解决方案——这个过程自动沉淀为 wiki 页面。下次再遇到类似问题，搜 wiki 比翻聊天记录快得多。
+
+**决策过程可追溯**
+讨论方案、对比选择、做出决定——对话中的思考过程自动归档。事后回顾时能清楚看到"当时为什么选了这个方案"。
+
+**个人偏好和经验积累**
+通过 fact 提取，你的工作习惯、常用工具、踩过的坑会自动积累到长期记忆。Hermes 越用越懂你。
+
 ## 安装
 
 ```bash
@@ -31,29 +63,30 @@ plugins:
 
 ```
 你和 Hermes 对话
-  → Session 结束（切换话题 / 重置 / 关闭）
-    → on_session_end hook 触发（毫秒级，不阻塞）
-      → 对话消息入队到 SQLite
-        → 后台 daemon 线程启动
-          → 调用你已配置的 LLM（来自 config.yaml）
-            → 分析：质量评分 / 语言检测 / 主题 / 实体 / 关键决策
-            → 写入结构化 wiki 页面到 SQLite
-            → 提取 facts 到 fact_store
+  → Session 结束（关闭 / 切换话题 / 重置）
+    → on_session_end 或 on_session_reset hook 触发（毫秒级，不阻塞）
+      → 若 hook 未传消息，从 state.db 读取
+        → 消息入队到 SQLite（按日期分段）
+          → 后台 daemon 线程启动
+            → 调用你已配置的 LLM（来自 config.yaml）
+              → 分析：质量评分 / 语言检测 / 主题 / 实体 / 关键决策 / facts
+              → 写入结构化 wiki 页面到 SQLite（quality >= 4）
+              → 提取可复用 facts 到 holographic memory（扩展模式下）
+  → 每 1 小时 batch scan 兜底（补捞 hook 漏掉的会话）
 ```
 
-插件首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue`、`hermes_wiki_session_state`），无需手动建表。
+插件会在首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue` 和 `hermes_wiki_session_state`）。无需手动建表。
 
 ## 触发条件
 
-| 场景 | 是否触发 wiki 生成 |
-|------|-------------------|
-| 正常对话结束 | ✅ 是 |
-| 已有 session 新增消息 | ✅ 每 5 分钟增量扫描后重建 |
-| 切换 session | ✅ 是 |
-| 重置 session | ✅ 是 |
-| Cron job session | ❌ 跳过 |
-| Subagent session | ❌ 跳过 |
-| 消息少于 2 条 | ❌ 跳过 |
+| 场景 | Hook | 是否触发 wiki 生成？ |
+|------|------|---------------------|
+| 关闭窗口 / 断连 / 超时 | `on_session_end` | ✅ 立即 |
+| 切换话题 / `/new` | `on_session_reset` | ✅ 立即 |
+| 已有会话新增消息 | batch scan | ✅ 1 小时内 |
+| Cron job 会话 | — | ❌ 跳过 |
+| 子代理会话 | — | ❌ 跳过 |
+| 消息少于 2 条 | — | ❌ 跳过 |
 
 ## 两种模式
 
@@ -125,12 +158,14 @@ sqlite3 ~/.hermes/memory_store.db \
 
 ## 功能特性
 
-- **7 语言 i18n**：en/zh/ja/ko/de/fr/es — LLM 自动检测对话语言，用相同语言生成 wiki 页面
-- **质量评分**：1-5 分制（5=深度+重要，1=噪音），低质量 session 最少处理
-- **主题分类**：自动发现主题，维护主题聚合页面（含 session 时间线）
+- **7 语言 i18n**：en/zh/ja/ko/de/fr/es — LLM 自动检测对话语言，wiki 页面用对应语言生成
+- **质量评分**：1-5 分制（5=深入且重要，1=噪音），低质量会话只做最小处理
+- **主题分类**：自动发现主题，维护主题聚合页面和会话时间线
 - **实体提取**：从对话中识别关键实体（人物、工具、系统）
-- **Provider 解析**：使用 Hermes 的 `PROVIDER_REGISTRY`，无硬编码 URL
-- **优雅降级**：LLM 不可用时自动回退到默认分析
+- **Fact 提取**：可复用知识（工具行为、配置坑、用户偏好）写入 holographic memory，可通过 `fact_store` 搜索
+- **双 Hook 触发**：`on_session_end` 处理会话关闭 + `on_session_reset` 处理话题切换，近实时生成 wiki
+- **Provider 解析**：使用 Hermes 的 `PROVIDER_REGISTRY` — 无硬编码 URL
+- **优雅降级**：LLM 不可用时回退到默认分析
 - **SQLite 3.31+ 兼容**：支持 Python 3.9+（不使用 RETURNING 子句）
 
 ## Wiki 页面结构
