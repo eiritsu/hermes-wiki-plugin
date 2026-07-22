@@ -51,13 +51,42 @@ WIKI_SEARCH_SCHEMA = {
 # ── Session end hook ────────────────────────────────────────────────────
 
 def _on_session_end(messages: List[Dict[str, Any]], **kwargs) -> None:
-    """Hook: enqueue session for wiki processing (non-blocking), date-segmented."""
+    """Hook: enqueue session for wiki processing (non-blocking), date-segmented.
+
+    The gateway fires on_session_end without passing messages, so we read
+    them from state.db when the hook-provided list is empty.
+    """
     global _wiki_store, _wiki_builder
-    if not _wiki_store or not _wiki_builder or not messages or len(messages) < 2:
+    if not _wiki_store or not _wiki_builder:
         return
 
     session_id = kwargs.get("session_id", "")
     if not session_id or "cron_" in session_id or "memory-wiki" in session_id:
+        return
+
+    # If hook didn't provide messages, read from state.db
+    if not messages or len(messages) < 2:
+        try:
+            from hermes_constants import get_hermes_home
+            import sqlite3 as _sqlite3
+            db_path = str(get_hermes_home() / "state.db")
+            conn = _sqlite3.connect(db_path, timeout=5.0)
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT role, content, timestamp FROM messages "
+                "WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            conn.close()
+            messages = [
+                {"role": r["role"], "content": r["content"], "timestamp": r["timestamp"]}
+                for r in rows
+            ]
+        except Exception as e:
+            logger.debug("hermes-wiki: failed to read messages from state.db: %s", e)
+            return
+
+    if not messages or len(messages) < 2:
         return
 
     try:
