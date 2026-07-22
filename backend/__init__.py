@@ -393,6 +393,8 @@ def register(ctx) -> None:
 
     # Register session end hook (immediate processing)
     ctx.register_hook("on_session_end", _on_session_end)
+    # Register session reset hook — triggers batch scan on topic switch / /new
+    ctx.register_hook("on_session_reset", lambda **kw: _batch_scan())
 
     # Register Gateway RPC methods for Desktop Plugin GUI when the host supports it.
     # Older/local Hermes builds without plugin RPC must still load the backend timer.
