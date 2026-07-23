@@ -96,47 +96,41 @@ function qualityColor(q) {
 // ── Wiki page list item ────────────────────────────────────────────────
 
 function qualityDotColor(q) {
-  if (q >= 5) return '#3fb950'  // green
-  if (q >= 4) return '#58a6ff'  // blue
-  if (q >= 3) return '#d29922'  // yellow
-  return '#555'
+  if (q >= 5) return 'var(--quality-green, #3fb950)'
+  if (q >= 4) return 'var(--quality-blue, #58a6ff)'
+  if (q >= 3) return 'var(--quality-yellow, #d29922)'
+  return 'var(--ui-text-quaternary, #555)'
 }
 
-function WikiListItem({ page, selected, onClick, selectable, checked, onCheck }) {
-  const q = page.quality
+function WikiListItem({ page, selected, onClick }) {
   return jsxs('div', {
     className: cn(
       'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-[1.625rem] transition-colors',
       'hover:bg-(--chrome-action-hover)',
       selected && 'bg-(--chrome-action-hover)'
     ),
-    children: [
-      jsxs('button', {
-        className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-4 pr-1',
-        onClick: () => { haptic('tap'); onClick(page) },
-        children: [
-          // Status dot
-          jsx('span', {
-            className: 'grid size-3.5 shrink-0 place-items-center',
-            children: jsx('span', {
-              className: 'size-1.5 rounded-full',
-              style: { backgroundColor: qualityDotColor(q) }
-            })
-          }),
-          // Title
-          jsx('span', {
-            className: cn('min-w-0 flex-1 truncate text-[0.8125rem] leading-none',
-              selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
-            children: page.title || page.slug
-          }),
-          // Date (right-aligned)
-          jsx('span', {
-            className: 'text-[0.6875rem] text-(--ui-text-quaternary)',
-            children: page.date || ''
+    children: jsxs('button', {
+      className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-4 pr-1',
+      onClick: () => { haptic('tap'); onClick(page) },
+      children: [
+        jsx('span', {
+          className: 'grid size-3.5 shrink-0 place-items-center',
+          children: jsx('span', {
+            className: 'size-1.5 rounded-full',
+            style: { backgroundColor: qualityDotColor(page.quality) }
           })
-        ]
-      })
-    ]
+        }),
+        jsx('span', {
+          className: cn('min-w-0 flex-1 truncate text-[0.8125rem] leading-none',
+            selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
+          children: page.title || page.slug
+        }),
+        jsx('span', {
+          className: 'shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)',
+          children: page.date || ''
+        })
+      ]
+    })
   })
 }
 
@@ -461,23 +455,26 @@ function TopicDetail({ topic, onBack, onSessionClick }) {
 
 function TopicGroup({ topic, expanded, onToggle, onTopicClick, onSessionClick }) {
   const sessions = topic.sessions || []
-
   return jsxs('div', { children: [
-    // Topic row — matches mockup exactly
+    // ── Topic row ──
     jsxs('div', {
       className: 'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-[1.625rem] hover:bg-(--chrome-action-hover)',
       children: jsxs('button', {
         className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-4 pr-1',
         onClick: () => onTopicClick(topic),
         children: [
-          jsx(Codicon, { name: expanded ? 'chevron-down' : 'chevron-right', className: 'size-3 shrink-0 text-(--ui-text-tertiary) cursor-pointer', onClick: e => { e.stopPropagation(); onToggle(topic.slug) } }),
-          jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 text-[#dcb67a] opacity-72' }),
+          jsx(Codicon, {
+            name: expanded ? 'chevron-down' : 'chevron-right',
+            className: 'size-3 shrink-0 text-(--ui-text-quaternary) cursor-pointer',
+            onClick: e => { e.stopPropagation(); onToggle(topic.slug) }
+          }),
+          jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 opacity-72', style: { color: '#dcb67a' } }),
           jsx('span', { className: 'min-w-0 flex-1 truncate text-[0.8125rem] leading-none text-(--ui-text-secondary)', children: topic.title || topic.slug }),
-          jsx('span', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary)', children: sessions.length })
+          jsx('span', { className: 'shrink-0 text-[0.6875rem] font-medium text-(--ui-text-quaternary)', children: sessions.length })
         ]
       })
     }),
-    // Child sessions — matches mockup exactly
+    // ── Child sessions ──
     expanded && sessions.map((s, i) =>
       jsxs('div', {
         className: 'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-[1.625rem] hover:bg-(--chrome-action-hover)',
@@ -485,7 +482,6 @@ function TopicGroup({ topic, expanded, onToggle, onTopicClick, onSessionClick })
           className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-8 pr-1',
           onClick: () => { haptic('tap'); onSessionClick(s.slug) },
           children: [
-            // Status dot
             jsx('span', {
               className: 'grid size-3.5 shrink-0 place-items-center',
               children: jsx('span', {
@@ -493,10 +489,8 @@ function TopicGroup({ topic, expanded, onToggle, onTopicClick, onSessionClick })
                 style: { backgroundColor: qualityDotColor(s.quality) }
               })
             }),
-            // Title
             jsx('span', { className: 'min-w-0 flex-1 truncate text-[0.8125rem] leading-none text-(--ui-text-secondary)', children: s.title || s.slug }),
-            // Date
-            jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-quaternary)', children: s.date || '' })
+            jsx('span', { className: 'shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)', children: s.date || '' })
           ]
         })
       }, s.slug || i)
@@ -619,22 +613,21 @@ function WikiPage() {
     })
   }
 
-  // List view — matches wiki-sidebar-mockup.html exactly
+  // List view — matches wiki-sidebar-mockup.html
   return jsxs('div', {
-    className: 'flex h-full flex-col overflow-hidden border-r border-(--ui-stroke-secondary) bg-(--ui-sidebar-surface-background, #1f1f1f)',
+    className: 'flex h-full flex-col',
     children: [
-      // ── Nav items (Wiki + Topics buttons, matching mockup) ──
+      // ── Nav: Wiki + Topics ──
       jsxs('div', {
         className: 'shrink-0 px-2.5 pb-2 pt-3',
         children: jsx('div', {
           className: 'grid grid-cols-[minmax(0,1fr)] gap-px',
           children: [
-            // Nav: Wiki (active)
             jsxs('button', {
-              className: cn('flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] font-medium',
+              className: cn('flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] font-medium transition-colors',
                 activeNav === 'wiki'
                   ? 'border border-(--ui-stroke-tertiary) bg-(--ui-control-active-background) text-foreground'
-                  : 'border border-transparent text-(--ui-text-secondary) hover:bg-(--ui-control-hover-background) hover:text-foreground'),
+                  : 'border border-transparent text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'),
               onClick: () => setActiveNav('wiki'),
               children: [
                 jsx(Codicon, { name: 'book', className: cn('size-3.5 shrink-0', activeNav === 'wiki' ? 'text-(--ui-accent)' : 'text-[color-mix(in_srgb,currentColor_72%,transparent)]') }),
@@ -642,15 +635,14 @@ function WikiPage() {
                 stats && jsx('span', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary)', children: stats.total })
               ]
             }),
-            // Nav: Topics (inactive)
             jsxs('button', {
-              className: cn('flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] font-medium',
+              className: cn('flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] font-medium transition-colors',
                 activeNav === 'topics'
                   ? 'border border-(--ui-stroke-tertiary) bg-(--ui-control-active-background) text-foreground'
-                  : 'border border-transparent text-(--ui-text-secondary) hover:bg-(--ui-control-hover-background) hover:text-foreground'),
+                  : 'border border-transparent text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'),
               onClick: () => setActiveNav('topics'),
               children: [
-                jsx(Codicon, { name: 'library', className: cn('size-3.5 shrink-0', activeNav === 'topics' ? 'text-(--ui-accent)' : 'text-[color-mix(in_srgb,currentColor_72%,transparent)]') }),
+                jsx(Codicon, { name: 'list-unordered', className: cn('size-3.5 shrink-0', activeNav === 'topics' ? 'text-(--ui-accent)' : 'text-[color-mix(in_srgb,currentColor_72%,transparent)]') }),
                 jsx('span', { className: 'min-w-0 flex-1 truncate', children: 'Topics' }),
                 jsx('span', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary)', children: topics.length })
               ]
@@ -662,77 +654,67 @@ function WikiPage() {
       jsxs('div', {
         className: 'shrink-0 px-2.5 pb-1.5',
         children: jsxs('div', {
-          className: 'flex h-7 items-center gap-1.5 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-tertiary, rgba(255,255,255,0.04)) px-2',
+          className: 'flex h-7 items-center gap-1.5 rounded-md border border-(--ui-stroke-secondary) bg-transparent px-2',
           children: [
             jsx(Codicon, { name: 'search', className: 'size-3.5 shrink-0 text-(--ui-text-quaternary)' }),
             jsx('input', {
               type: 'text',
               placeholder: 'Search wiki...',
-              className: 'flex-1 bg-transparent text-[12px] text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary)',
+              className: 'min-w-0 flex-1 bg-transparent text-[12px] text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary)',
               value: search,
               onChange: e => setSearch(e.target.value)
             })
           ]
         })
       }),
-      // ── Content (scrollable) ──
+      // ── Content ──
       jsxs('div', {
         className: 'flex-1 overflow-y-auto px-2.5',
         children: [
-          // ── Topics section ──
-          activeNav !== 'pages' && jsxs('div', {
+          // Topics section
+          jsxs('div', {
             className: 'pb-1 pt-1',
             children: [
-              // Section header
               jsxs('button', {
-                className: 'flex h-[1.625rem] w-full items-center gap-1.5 pl-2 pr-1 text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide cursor-default select-none',
+                className: 'flex h-[1.625rem] w-full items-center gap-1.5 pl-2 pr-1 text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide',
                 onClick: () => setTopicsSectionOpen(!topicsSectionOpen),
                 children: [
                   jsx(Codicon, { name: topicsSectionOpen ? 'chevron-down' : 'chevron-right', className: 'size-3 shrink-0' }),
                   jsx('span', { className: 'flex-1', children: 'Topics' })
                 ]
               }),
-              // Topic groups
               topicsSectionOpen && topics.map(t =>
                 jsx(TopicGroup, {
-                  topic: t,
-                  expanded: expandedTopics.has(t.slug),
-                  onToggle: toggleTopicExpand,
-                  onTopicClick: handleTopicClick,
+                  topic: t, expanded: expandedTopics.has(t.slug),
+                  onToggle: toggleTopicExpand, onTopicClick: handleTopicClick,
                   onSessionClick: handleSessionFromTopic
                 }, t.slug)
               )
             ]
           }),
-          // ── Divider ──
+          // Divider (only in Wiki tab)
           activeNav === 'wiki' && jsx('div', { className: 'mx-2 my-1.5 h-px bg-(--ui-stroke-secondary)' }),
-          // ── All Pages section ──
+          // All Pages section (only in Wiki tab)
           activeNav === 'wiki' && jsxs('div', {
             className: 'pb-1',
             children: [
-              // Section header
               jsxs('button', {
-                className: 'flex h-[1.625rem] w-full items-center gap-1.5 pl-2 pr-1 text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide cursor-default select-none',
+                className: 'flex h-[1.625rem] w-full items-center gap-1.5 pl-2 pr-1 text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide',
                 onClick: () => setAllPagesSectionOpen(!allPagesSectionOpen),
                 children: [
                   jsx(Codicon, { name: allPagesSectionOpen ? 'chevron-down' : 'chevron-right', className: 'size-3 shrink-0' }),
                   jsx('span', { className: 'flex-1', children: 'All Pages' })
                 ]
               }),
-              // Page rows
               allPagesSectionOpen && pages.map(page =>
-                jsx(WikiListItem, {
-                  page, selected: selected?.slug === page.slug, onClick: handleSelect,
-                  selectable: selectMode, checked: checked.has(page.slug), onCheck: handleCheck
-                }, page.slug)
+                jsx(WikiListItem, { page, selected: selected?.slug === page.slug, onClick: handleSelect }, page.slug)
               )
             ]
           })
         ]
       }),
-      // ── Export menu ──
+      // Export / New page dialogs
       showExportMenu && jsx(ExportMenu, { selectedSlugs: [...checked], onClose: () => setShowExportMenu(false) }),
-      // ── New page dialog ──
       showNew && jsx(NewPageDialog, { onClose: () => setShowNew(false), onCreated: () => { setShowNew(false); refresh() } })
     ]
   })
