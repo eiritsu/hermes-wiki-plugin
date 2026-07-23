@@ -855,67 +855,10 @@ function WikiPage() {
   // Right panel — TopicDetail / WikiDetail / empty state
   let rightPanel
   if (view === 'topic-detail' && topicDetail) {
-    const sessions = topicDetail.sessions || []
-    const overview = topicDetail.overview || topicDetail.summary || ''
-    const timeline = topicDetail.timeline || []
-    const entities = topicDetail.entities || []
-    rightPanel = jsxs('div', {
-      className: 'flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-(--ui-bg-primary)',
-      children: [
-        // Header
-        jsxs('div', {
-          className: 'flex shrink-0 items-center gap-2 border-b border-(--ui-stroke-secondary) px-4 py-2',
-          children: [
-            jsx('button', {
-              className: 'flex size-6 items-center justify-center rounded-md text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground',
-              onClick: handleBack,
-              children: jsx(Codicon, { name: 'arrow-left', className: 'size-4' })
-            }),
-            jsx('span', { className: 'flex-1 truncate text-sm font-medium text-foreground', children: topicDetail.title || topicDetail.slug }),
-            jsx(Badge, { variant: 'secondary', children: `${sessions.length} session${sessions.length !== 1 ? 's' : ''}` })
-          ]
-        }),
-        // Body
-        jsx('div', {
-          className: 'flex-1 overflow-y-auto px-4 py-3',
-          children: jsxs('div', { className: 'flex flex-col gap-4', children: [
-            // Overview
-            overview && jsxs('div', { children: [
-              jsx('h2', { className: 'mb-1.5 text-xs font-medium text-(--ui-text-secondary)', children: 'Overview' }),
-              jsx('p', { className: 'text-sm leading-7 text-(--ui-text-primary)', children: overview })
-            ]}),
-            // Timeline
-            (timeline.length > 0 || sessions.length > 0) && jsxs('div', { children: [
-              jsx('h2', { className: 'mb-1.5 text-xs font-medium text-(--ui-text-secondary)', children: 'Timeline' }),
-              jsx('div', { className: 'flex flex-col', children:
-                (timeline.length > 0 ? timeline : sessions).map((entry, i) => {
-                  const s = typeof entry === 'string' ? { title: entry } : entry
-                  return jsxs('button', {
-                    className: 'flex min-h-8 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-(--chrome-action-hover)',
-                    onClick: s.slug ? () => { haptic('tap'); handleSessionFromTopic(s.slug) } : undefined,
-                    children: [
-                      jsx('span', { className: 'mt-0.5 shrink-0 text-xs text-(--ui-text-quaternary)', style: { minWidth: '40px' }, children: s.date || '' }),
-                      jsx('div', { className: 'min-w-0 flex-1', children: [
-                        jsx('span', { className: cn('text-sm', s.slug ? 'text-(--ui-accent) hover:underline cursor-pointer' : 'text-(--ui-text-primary)'), children: s.title || s.slug }),
-                        s.description && jsx('p', { className: 'mt-0.5 text-xs text-(--ui-text-tertiary)', children: s.description })
-                      ]})
-                    ]
-                  }, i)
-                })
-              })
-            ]}),
-            // Entities
-            entities.length > 0 && jsxs('div', { children: [
-              jsx('h2', { className: 'mb-1.5 text-xs font-medium text-(--ui-text-secondary)', children: 'Entities' }),
-              jsx('div', { className: 'flex flex-wrap gap-1', children:
-                entities.map((entity, i) =>
-                  jsx('span', { key: i, className: 'inline-flex items-center rounded-sm bg-(--ui-bg-secondary) px-1.5 py-0.5 text-xs text-(--ui-text-secondary)', children: typeof entity === 'string' ? entity : entity.name || entity.title })
-                )
-              })
-            ]})
-          ]})
-        })
-      ]
+    rightPanel = jsx(TopicDetail, {
+      topic: topicDetail,
+      onBack: handleBack,
+      onSessionClick: handleSessionFromTopic
     })
   } else if (view === 'session-detail' && detail) {
     rightPanel = jsx(WikiDetail, {
