@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # hermes-wiki plugin installer
 # Usage: bash install.sh
+#
+# Installs backend files from backend/ to ~/.hermes/plugins/hermes_wiki/
+# (flat layout). The Desktop plugin goes to ~/.hermes/desktop-plugins/hermes-wiki/.
 
 set -euo pipefail
 
@@ -16,30 +19,38 @@ DESKTOP_DST="$HERMES_HOME/desktop-plugins/hermes-wiki"
 echo "Installing hermes-wiki plugin..."
 echo ""
 
-# Backend plugin
-mkdir -p "$BACKEND_DST/prompts"
-mkdir -p "$BACKEND_DST/topic"
-
-# Core backend files
-for f in plugin.yaml __init__.py wiki_store.py wiki_builder.py wiki_rpc.py llm_client.py rpc_utils.py; do
-  cp "$BACKEND_SRC/$f" "$BACKEND_DST/"
+# Backend plugin — flat layout (Hermes scans ~/.hermes/plugins/<name>/)
+mkdir -p "$BACKEND_DST"
+for f in __init__.py wiki_store.py wiki_builder.py wiki_rpc.py llm_client.py rpc_utils.py plugin.yaml; do
+  if [ -f "$BACKEND_SRC/$f" ]; then
+    cp "$BACKEND_SRC/$f" "$BACKEND_DST/"
+  fi
 done
 
 # Topic submodule
+mkdir -p "$BACKEND_DST/topic"
 for f in __init__.py topic_builder.py topic_rpc.py topic_store.py; do
-  cp "$BACKEND_SRC/topic/$f" "$BACKEND_DST/topic/"
+  if [ -f "$BACKEND_SRC/topic/$f" ]; then
+    cp "$BACKEND_SRC/topic/$f" "$BACKEND_DST/topic/"
+  fi
 done
 
 # Prompts
-cp "$BACKEND_SRC/prompts/default.md" "$BACKEND_DST/prompts/"
-cp "$BACKEND_SRC/prompts/topic.md" "$BACKEND_DST/prompts/"
+mkdir -p "$BACKEND_DST/prompts"
+for f in default.md topic.md; do
+  if [ -f "$BACKEND_SRC/prompts/$f" ]; then
+    cp "$BACKEND_SRC/prompts/$f" "$BACKEND_DST/prompts/"
+  fi
+done
 
 echo "  Backend  -> $BACKEND_DST"
 
 # Desktop plugin
 mkdir -p "$DESKTOP_DST"
-cp "$DESKTOP_SRC/plugin.js" "$DESKTOP_DST/"
-echo "  Desktop  -> $DESKTOP_DST"
+if [ -f "$DESKTOP_SRC/plugin.js" ]; then
+  cp "$DESKTOP_SRC/plugin.js" "$DESKTOP_DST/"
+  echo "  Desktop  -> $DESKTOP_DST"
+fi
 
 # Gateway RPC patch (needed until PR #66874 is merged upstream)
 HERMES_AGENT="$HERMES_HOME/hermes-agent"
@@ -79,11 +90,9 @@ with open(cfg_path) as f:
     cfg = yaml.safe_load(f) or {}
 toolsets = cfg.get('toolsets', [])
 changed = False
-# Add wiki toolset (plugin-provided, contains wiki_search)
 if isinstance(toolsets, list) and 'wiki' not in toolsets:
     toolsets.append('wiki')
     changed = True
-# Remove hermes-wiki if present (triggers platform adapter bug, not a real toolset)
 if isinstance(toolsets, list) and 'hermes-wiki' in toolsets:
     toolsets.remove('hermes-wiki')
     changed = True

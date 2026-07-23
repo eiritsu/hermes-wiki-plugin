@@ -9,4 +9,7 @@ __pycache__/
 /wiki_builder.py
 /wiki_rpc.py
 /wiki_store.py
+/llm_client.py
+/rpc_utils.py
 /prompts/
+/topic/
