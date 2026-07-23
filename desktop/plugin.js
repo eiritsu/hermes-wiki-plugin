@@ -530,6 +530,7 @@ function WikiPage() {
   const [expandedTopics, setExpandedTopics] = useState(new Set())
   const [topicsSectionOpen, setTopicsSectionOpen] = useState(true)
   const [allPagesSectionOpen, setAllPagesSectionOpen] = useState(true)
+  const [listTab, setListTab] = useState('wiki') // 'wiki' | 'topics'
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -692,6 +693,28 @@ function WikiPage() {
         children: jsx(SearchField, { value: search, onChange: setSearch,
           placeholder: 'Search wiki pages...', className: 'w-full' })
       }),
+      // Wiki / Topics tabs
+      jsxs('div', {
+        className: 'flex gap-0.5 border-b border-(--ui-stroke-secondary) px-3',
+        children: [
+          jsx('button', {
+            className: cn('px-3 py-1.5 text-[0.8125rem] font-medium transition-colors',
+              listTab === 'wiki'
+                ? 'border-b-2 border-(--ui-accent) text-foreground'
+                : 'text-(--ui-text-tertiary) hover:text-(--ui-text-secondary)'),
+            onClick: () => setListTab('wiki'),
+            children: 'Wiki'
+          }),
+          jsx('button', {
+            className: cn('px-3 py-1.5 text-[0.8125rem] font-medium transition-colors',
+              listTab === 'topics'
+                ? 'border-b-2 border-(--ui-accent) text-foreground'
+                : 'text-(--ui-text-tertiary) hover:text-(--ui-text-secondary)'),
+            onClick: () => setListTab('topics'),
+            children: 'Topics'
+          })
+        ]
+      }),
       // Page list
       jsx('div', {
         className: 'flex-1 overflow-y-auto',
@@ -723,8 +746,8 @@ function WikiPage() {
                       }, t.slug)
                     )})
                   ]}),
-                  // All Pages section
-                  jsxs('div', { children: [
+                  // All Pages section (hidden when Topics tab is active)
+                  listTab === 'wiki' && jsxs('div', { children: [
                     jsxs('button', {
                       className: 'flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-(--chrome-action-hover)',
                       onClick: () => setAllPagesSectionOpen(!allPagesSectionOpen),
@@ -743,6 +766,15 @@ function WikiPage() {
                   ]})
                 ]})
               })
+      }),
+      // Stats footer
+      stats && jsxs('div', {
+        className: 'flex gap-3 border-t border-(--ui-stroke-secondary) px-3.5 py-2 text-[0.6875rem] text-(--ui-text-quaternary)',
+        children: [
+          jsxs('span', { children: ['📄 ', stats.total, ' pages'] }),
+          jsxs('span', { children: ['📂 ', topics.length, ' topics'] }),
+          jsxs('span', { children: ['⭐ avg q', (stats.avg_quality || 0).toFixed(1)] })
+        ]
       }),
       // Export menu
       showExportMenu && jsx(ExportMenu, { selectedSlugs: [...checked], onClose: () => setShowExportMenu(false) }),
