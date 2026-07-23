@@ -102,35 +102,74 @@ function qualityDotColor(q) {
   return 'var(--ui-text-quaternary, #555)'
 }
 
-function WikiListItem({ page, selected, onClick }) {
+function WikiListItem({ page, selected, selectable, checked, onCheck, onClick }) {
+  const handleRowClick = (e) => {
+    if (selectable) return  // in select mode, outer div handles click
+    haptic('tap'); onClick(page)
+  }
   return jsxs('div', {
     className: cn(
       'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7 transition-colors',
-      'hover:bg-(--chrome-action-hover)',
-      selected && 'bg-(--chrome-action-hover)'
+      selectable ? 'cursor-pointer' : 'hover:bg-(--chrome-action-hover)',
+      !selectable && selected && 'bg-(--chrome-action-hover)'
     ),
-    children: jsxs('button', {
-      className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-7 pr-1',
-      onClick: () => { haptic('tap'); onClick(page) },
-      children: [
-        jsx('span', {
-          className: 'grid size-3.5 shrink-0 place-items-center',
-          children: jsx('span', {
-            className: 'size-1.5 rounded-full',
-            style: { backgroundColor: qualityDotColor(page.quality) }
+    onClick: selectable ? () => onCheck(page.slug, !checked) : undefined,
+    children: [
+      // Optional checkbox in select mode
+      selectable && jsx('input', {
+        type: 'checkbox',
+        checked: !!checked,
+        onChange: e => onCheck(page.slug, e.target.checked),
+        onClick: e => e.stopPropagation(),
+        className: 'ml-2 shrink-0'
+      }),
+      jsx('button', {
+        className: cn('flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pr-1',
+          selectable ? 'pl-1' : 'pl-7'),
+        onClick: handleRowClick,
+        style: { width: '100%' },
+        children: [
+          jsx('span', {
+            className: 'grid size-3.5 shrink-0 place-items-center',
+            children: jsx('span', {
+              className: 'size-1.5 rounded-full',
+              style: { backgroundColor: qualityDotColor(page.quality) }
+            })
+          }),
+          jsx('span', {
+            className: cn('min-w-0 flex-1 truncate text-sm leading-none',
+              selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
+            children: page.title || page.slug
+          }),
+          jsx('span', {
+            className: 'shrink-0 text-xs text-(--ui-text-quaternary)',
+            children: page.date || ''
           })
-        }),
-        jsx('span', {
-          className: cn('min-w-0 flex-1 truncate text-sm leading-none',
-            selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
-          children: page.title || page.slug
-        }),
-        jsx('span', {
-          className: 'shrink-0 text-xs text-(--ui-text-quaternary)',
-          children: page.date || ''
-        })
-      ]
-    })
+        ]
+      })
+    ]
+  })
+}
+
+// ── DetailToolbar (shared by WikiDetail + TopicDetail) ─────────────────
+
+function DetailToolbar({ back, title, badge, onExport, onDelete, extra }) {
+  return jsxs('div', {
+    className: 'flex items-center gap-2 border-b border-(--ui-stroke-secondary) px-4 py-2',
+    children: [
+      jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)', onClick: back,
+        children: jsx(Codicon, { name: 'arrow-left' }) }),
+      jsx('span', { className: 'flex-1 truncate text-sm font-medium', children: title }),
+      badge && jsx(Badge, { variant: 'secondary', children: badge }),
+      jsx(Separator, { orientation: 'vertical', className: 'h-4' }),
+      extra, // optional left group (edit/save buttons, or other actions)
+      onExport && jsx(Tip, { label: 'Export as .md',
+        children: jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
+          onClick: onExport, children: jsx(Codicon, { name: 'desktop-download' }) }) }),
+      onDelete && jsx(Tip, { label: 'Delete',
+        children: jsx('button', { className: 'rounded p-1 text-red-500 hover:bg-(--chrome-action-hover)',
+          onClick: onDelete, children: jsx(Codicon, { name: 'trash' }) }) })
+    ]
   })
 }
 
@@ -188,31 +227,23 @@ function WikiDetail({ page, onBack, onRefresh }) {
     className: 'flex h-full flex-col',
     children: [
       // Toolbar
-      jsxs('div', {
-        className: 'flex items-center gap-2 border-b border-(--ui-stroke-secondary) px-4 py-2',
-        children: [
-          jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)', onClick: onBack,
-            children: jsx(Codicon, { name: 'arrow-left' }) }),
-          jsx('span', { className: 'flex-1 truncate text-sm font-medium', children: page.title }),
-          page.quality != null && jsx(Badge, { variant: 'secondary', children: `Q${page.quality}` }),
-          jsx(Separator, { orientation: 'vertical', className: 'h-4' }),
-          jsx(Tooltip, { label: 'Export as .md',
-            children: jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
-              onClick: handleExportSingle, children: jsx(Codicon, { name: 'desktop-download' }) }) }),
-          jsx(Tooltip, { label: editing ? 'Cancel' : 'Edit',
+      jsx(DetailToolbar, {
+        back: onBack,
+        title: page.title,
+        badge: page.quality != null ? `Q${page.quality}` : null,
+        onExport: handleExportSingle,
+        onDelete: () => setShowDeleteConfirm(true),
+        extra: jsxs(Fragment, { children: [
+          jsx(Tip, { label: editing ? 'Cancel' : 'Edit',
             children: jsx('button', {
               className: cn('rounded p-1 hover:bg-(--chrome-action-hover)', editing && 'text-(--ui-accent)'),
               onClick: () => { setEditing(!editing); if (editing) { setTitle(page.title); setContent(page.full_content || '') } },
               children: jsx(Codicon, { name: editing ? 'close' : 'edit' }) }) }),
-          editing && jsx(Tooltip, { label: saving ? 'Saving...' : 'Save',
+          editing && jsx(Tip, { label: saving ? 'Saving...' : 'Save',
             children: jsx('button', { className: 'rounded p-1 text-(--ui-accent) hover:bg-(--chrome-action-hover)',
               onClick: handleSave, disabled: saving,
-              children: jsx(Codicon, { name: saving ? 'loading' : 'check' }) }) }),
-          jsx(Tooltip, { label: 'Delete',
-            children: jsx('button', { className: 'rounded p-1 text-red-500 hover:bg-(--chrome-action-hover)',
-              onClick: () => setShowDeleteConfirm(true),
-              children: jsx(Codicon, { name: 'trash' }) }) })
-        ]
+              children: jsx(Codicon, { name: saving ? 'loading' : 'check' }) }) })
+        ] })
       }),
       // Metadata
       jsxs('div', {
@@ -370,11 +401,32 @@ function TopicDetail({ topic, onBack, onSessionClick }) {
     const lines = content.split('\n')
     let current = 'overview'
     const sections = { overview: '', timeline: '', entities: '' }
+    let inFrontmatter = false
+    let frontmatterDone = false
     for (const line of lines) {
-      const lower = line.toLowerCase().trim()
-      if (lower.startsWith('## timeline') || lower.startsWith('### timeline')) { current = 'timeline'; continue }
-      if (lower.startsWith('## entities') || lower.startsWith('### entities')) { current = 'entities'; continue }
-      if (lower.startsWith('## overview') || lower.startsWith('### overview')) { current = 'overview'; continue }
+      const stripped = line.trim()
+      // Skip YAML frontmatter fence (between two --- lines)
+      if (stripped === '---') {
+        if (!frontmatterDone) { inFrontmatter = true; frontmatterDone = true; continue }
+        else { inFrontmatter = false; continue }
+      }
+      if (inFrontmatter) continue
+      const lower = stripped.toLowerCase()
+      // Recognize headings (English + Chinese variants from LLM output)
+      if (lower.startsWith('## timeline') || lower.startsWith('### timeline')
+          || /^##\s*时间线/.test(stripped) || /^###\s*时间线/.test(stripped)) {
+        current = 'timeline'; continue
+      }
+      if (lower.startsWith('## entities') || lower.startsWith('### entities')
+          || /^##\s*实体/.test(stripped) || /^###\s*实体/.test(stripped)
+          || /^##\s*相关(实体|主题)/.test(stripped)) {
+        current = 'entities'; continue
+      }
+      if (lower.startsWith('## overview') || lower.startsWith('### overview')
+          || /^##\s*概述/.test(stripped) || /^###\s*概述/.test(stripped)
+          || /^##\s*主题概述/.test(stripped)) {
+        current = 'overview'; continue
+      }
       sections[current] += line + '\n'
     }
     return sections
@@ -387,27 +439,28 @@ function TopicDetail({ topic, onBack, onSessionClick }) {
   return jsxs('div', {
     className: 'flex h-full flex-col',
     children: [
-      // Header
-      jsxs('div', {
-        className: 'flex items-center gap-2 border-b border-(--ui-stroke-secondary) px-4 py-2',
-        children: [
-          jsx('button', {
-            className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
-            onClick: onBack,
-            children: jsx(Codicon, { name: 'arrow-left' })
-          }),
-          jsx('span', { className: 'flex-1 truncate text-sm font-medium', children: topic.title || topic.slug }),
-          jsx(Badge, { variant: 'secondary', children: `${sessions.length} session${sessions.length !== 1 ? 's' : ''}` })
-        ]
+      // Toolbar (shared with WikiDetail via DetailToolbar)
+      jsx(DetailToolbar, {
+        back: onBack,
+        title: topic.title || topic.slug,
+        badge: `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`,
+        onExport: () => downloadFile(`${topic.slug || 'topic'}.md`,
+          topic.full_content || (topic.overview ? `# ${topic.title}\n\n## Overview\n${topic.overview}\n` : '')),
+        onDelete: () => {
+          if (host.notify) host.notify({ kind: 'info', message: 'Topic deletion not yet supported in RPC — use SQL or wiki.delete on session pages' })
+        }
       }),
       // Content
       jsx('div', {
         className: 'flex-1 overflow-y-auto px-4 py-3',
         children: jsxs('div', { className: 'flex flex-col gap-4', children: [
-          // Overview
+          // Overview — render markdown content (LLM output may use any language)
           sections.overview.trim() && jsxs('div', { children: [
             jsx('h3', { className: 'text-xs font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Overview' }),
-            jsx('div', { className: 'text-sm text-(--ui-text-secondary) whitespace-pre-wrap leading-relaxed', children: sections.overview.trim() })
+            jsx('div', {
+              className: 'prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-sm leading-relaxed',
+              children: sections.overview.trim()
+            })
           ]}),
           // Timeline
           timelineEntries.length > 0 && jsxs('div', { children: [
@@ -453,28 +506,43 @@ function TopicDetail({ topic, onBack, onSessionClick }) {
 
 // ── Topic group (collapsible tree node) ────────────────────────────────
 
-function TopicGroup({ topic, expanded, onToggle, onTopicClick, onSessionClick }) {
+function TopicGroup({ topic, expanded, selectable, checked, onCheck, onToggle, onTopicClick, onSessionClick }) {
   const sessions = topic.sessions || []
+  const topicSelected = !!checked
   return jsxs('div', { children: [
     // ── Topic row ──
     jsxs('div', {
-      className: 'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7 hover:bg-(--chrome-action-hover)',
-      children: jsxs('button', {
-        className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-4 pr-1',
-        onClick: () => onTopicClick(topic),
-        children: [
-          jsx(Codicon, {
-            name: expanded ? 'chevron-down' : 'chevron-right',
-            className: 'size-3 shrink-0 text-(--ui-text-quaternary) cursor-pointer',
-            onClick: e => { e.stopPropagation(); onToggle(topic.slug) }
-          }),
-          jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 opacity-72', style: { color: '#dcb67a' } }),
-          jsx('span', { className: 'min-w-0 flex-1 truncate text-sm leading-none text-(--ui-text-secondary)', children: topic.title || topic.slug }),
-          jsx('span', { className: 'shrink-0 text-xs font-medium text-(--ui-text-quaternary)', children: sessions.length })
-        ]
-      })
+      className: cn('grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7',
+        selectable ? 'cursor-pointer' : 'hover:bg-(--chrome-action-hover)'),
+      onClick: selectable ? () => onCheck(topic.slug, !topicSelected) : undefined,
+      children: [
+        // Optional checkbox in select mode
+        selectable && jsx('input', {
+          type: 'checkbox',
+          checked: topicSelected,
+          onChange: e => onCheck(topic.slug, e.target.checked),
+          onClick: e => e.stopPropagation(),
+          className: 'ml-3 shrink-0 self-center'
+        }),
+        jsx('button', {
+          className: cn('flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pr-1',
+            selectable ? 'pl-1' : 'pl-4'),
+          onClick: selectable ? undefined : () => onTopicClick(topic),
+          style: { width: '100%' },
+          children: [
+            jsx(Codicon, {
+              name: expanded ? 'chevron-down' : 'chevron-right',
+              className: 'size-3 shrink-0 text-(--ui-text-quaternary) cursor-pointer',
+              onClick: e => { e.stopPropagation(); onToggle(topic.slug) }
+            }),
+            jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 opacity-72', style: { color: '#dcb67a' } }),
+            jsx('span', { className: 'min-w-0 flex-1 truncate text-sm leading-none text-(--ui-text-secondary)', children: topic.title || topic.slug }),
+            jsx('span', { className: 'shrink-0 text-xs font-medium text-(--ui-text-quaternary)', children: sessions.length })
+          ]
+        })
+      ]
     }),
-    // ── Child sessions ──
+    // ── Child sessions (always clickable, no checkbox — sessions are read-only when topic selected) ──
     expanded && sessions.map((s, i) =>
       jsxs('div', {
         className: 'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7 hover:bg-(--chrome-action-hover)',
@@ -517,7 +585,7 @@ function WikiPage() {
   const [expandedTopics, setExpandedTopics] = useState(new Set())
   const [topicsSectionOpen, setTopicsSectionOpen] = useState(true)
   const [allPagesSectionOpen, setAllPagesSectionOpen] = useState(false)
-  const [activeNav, setActiveNav] = useState('wiki') // 'wiki' | 'topics'
+  // activeNav removed — sidebar now shows unified Topics + All Pages sections,
 
 
   // Inject custom CSS for arbitrary values not compiled by Tailwind (plugin runtime classes)
@@ -593,19 +661,25 @@ function WikiPage() {
     })
   }
 
-  function handleCheck(slug, isChecked) {
+  function handleCheck(type, slug, isChecked) {
+    // type: 'page' | 'topic'. Store as `${type}:${slug}` to disambiguate.
+    const key = `${type}:${slug}`
     setChecked(prev => {
       const next = new Set(prev)
-      if (isChecked) next.add(slug); else next.delete(slug)
+      if (isChecked) next.add(key); else next.delete(key)
       return next
     })
   }
 
   function handleSelectAll() {
-    if (checked.size === pages.length) {
+    const allKeys = [
+      ...pages.map(p => `page:${p.slug}`),
+      ...topics.map(t => `topic:${t.slug}`),
+    ]
+    if (checked.size === allKeys.length) {
       setChecked(new Set())
     } else {
-      setChecked(new Set(pages.map(p => p.slug)))
+      setChecked(new Set(allKeys))
     }
   }
 
@@ -618,9 +692,80 @@ function WikiPage() {
   const sidebar = jsxs('div', {
     className: 'flex h-full w-64 shrink-0 min-w-0 flex-col overflow-hidden border-r border-(--ui-stroke-secondary) bg-(--ui-sidebar-surface-background, #1f1f1f)',
     children: [
+      // ── Toolbar: select, export, delete, new, refresh ──
+      jsxs('div', {
+        className: 'flex shrink-0 items-center gap-1 border-b border-(--ui-stroke-secondary) px-2 py-1',
+        children: [
+          // Select mode toggle
+          jsx(Tip, { label: selectMode ? 'Exit select' : 'Select',
+            children: jsx('button', {
+              className: cn('rounded p-1 hover:bg-(--chrome-action-hover)', selectMode && 'text-(--ui-accent)'),
+              onClick: toggleSelectMode,
+              children: jsx(Codicon, { name: selectMode ? 'arrow-left' : 'list-selection', className: 'size-4' })
+            })
+          }),
+          // Select all (only in select mode)
+          selectMode && (() => {
+            const allKeys = [
+              ...pages.map(p => `page:${p.slug}`),
+              ...topics.map(t => `topic:${t.slug}`),
+            ]
+            const allSelected = checked.size === allKeys.length && allKeys.length > 0
+            return jsx(Tip, {
+              label: allSelected ? 'Deselect all' : 'Select all',
+              children: jsx('button', {
+                className: cn('rounded px-1.5 py-1 text-xs hover:bg-(--chrome-action-hover)',
+                  allSelected && 'text-(--ui-accent)'),
+                onClick: handleSelectAll,
+                children: allSelected ? 'Deselect' : 'All'
+              })
+            })
+          })(),
+          // Export (only in select mode with selection)
+          selectMode && checked.size > 0 && jsx(Tip, { label: `Export (${checked.size})`,
+            children: jsx('button', {
+              className: 'rounded p-1 text-(--ui-accent) hover:bg-(--chrome-action-hover)',
+              onClick: () => setShowExportMenu(true),
+              children: jsx(Codicon, { name: 'desktop-download', className: 'size-4' })
+            })
+          }),
+          // Delete selected (only in select mode with selection)
+          selectMode && checked.size > 0 && jsx(Tip, { label: `Delete (${checked.size})`,
+            children: jsx('button', {
+              className: 'rounded p-1 text-red-500 hover:bg-(--chrome-action-hover)',
+              onClick: async () => {
+                let pages = 0, topics = 0
+                for (const key of checked) {
+                  const [type, slug] = key.split(':')
+                  if (type === 'page') { await wikiDelete(slug); pages++ }
+                  else if (type === 'topic') { topics++ /* topic delete RPC not implemented */ }
+                }
+                host.notify({ kind: 'info', message: `Deleted ${pages} page(s)${topics ? `, skipped ${topics} topic(s) — needs topic.delete RPC` : ''}` })
+                setChecked(new Set()); setSelectMode(false); refresh()
+              },
+              children: jsx(Codicon, { name: 'trash', className: 'size-4' })
+            })
+          }),
+          jsx('div', { className: 'mx-1 h-4 w-px bg-(--ui-stroke-secondary)' }),
+          // New page
+          jsx(Tip, { label: 'New page',
+            children: jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
+              onClick: () => setShowNew(true),
+              children: jsx(Codicon, { name: 'add', className: 'size-4' })
+            })
+          }),
+          // Refresh
+          jsx(Tip, { label: 'Refresh',
+            children: jsx('button', { className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
+              onClick: refresh,
+              children: jsx(Codicon, { name: 'refresh', className: 'size-4' })
+            })
+          })
+        ]
+      }),
       // ── Search ──
       jsxs('div', {
-        className: 'shrink-0 px-3 pb-1.5',
+        className: 'shrink-0 px-3 pb-1.5 pt-1.5',
         children: jsxs('div', {
           className: 'flex h-7 items-center gap-1.5 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-tertiary, rgba(255,255,255,0.04)) px-2',
           children: [
@@ -660,7 +805,10 @@ function WikiPage() {
                   jsx(TopicGroup, {
                     topic: t, expanded: expandedTopics.has(t.slug),
                     onToggle: toggleTopicExpand, onTopicClick: handleTopicClick,
-                    onSessionClick: handleSessionFromTopic
+                    onSessionClick: handleSessionFromTopic,
+                    selectable: selectMode,
+                    checked: checked.has(`topic:${t.slug}`),
+                    onCheck: (slug, c) => handleCheck('topic', slug, c)
                   }, t.slug)
                 )
               })
@@ -686,7 +834,12 @@ function WikiPage() {
               allPagesSectionOpen && jsx('div', {
                 className: 'flex-1 overflow-y-auto overflow-x-hidden min-w-0',
                 children: pages.map(page =>
-                  jsx(WikiListItem, { page, selected: selected?.slug === page.slug, onClick: handleSelect }, page.slug)
+                  jsx(WikiListItem, { page, selected: selected?.slug === page.slug,
+                    onClick: handleSelect,
+                    selectable: selectMode,
+                    checked: checked.has(`page:${page.slug}`),
+                    onCheck: (slug, c) => handleCheck('page', slug, c)
+                  }, page.slug)
                 )
               })
             ]
