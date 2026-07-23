@@ -268,3 +268,55 @@ def wiki_batch_process(rid, params):
                            "total_sessions": len(sessions), "already_processed": len(processed)}}
     except Exception as exc:
         return _err(rid, -32000, f"wiki.batch_process failed: {exc}")
+
+
+def wiki_list_topics(rid, params):
+    """Return all topic pages with their associated session pages."""
+    try:
+        from hermes_constants import get_hermes_home
+        from hermes_wiki.wiki_store import WikiStore
+
+        ws = WikiStore()
+        topics = ws.list_topics()
+        ws.close()
+
+        # Simplify session data for frontend
+        for t in topics:
+            for s in t.get("sessions", []):
+                s.pop("source_session_id", None)
+
+        return {"jsonrpc": "2.0", "id": rid,
+                "result": {"topics": topics, "count": len(topics)}}
+    except Exception as exc:
+        return _err(rid, -32000, f"wiki.list_topics failed: {exc}")
+
+
+def wiki_get_topic(rid, params):
+    """Return a topic page with its full content and associated sessions."""
+    try:
+        slug = params.get("slug", "")
+        if not slug:
+            return _err(rid, -32602, "Missing 'slug' parameter")
+
+        from hermes_constants import get_hermes_home
+        from hermes_wiki.wiki_store import WikiStore
+
+        ws = WikiStore()
+        topic = ws.get_topic_page(slug)
+        if not topic:
+            ws.close()
+            return _err(rid, -32001, f"Topic '{slug}' not found")
+
+        # Get associated sessions
+        topics_list = ws.list_topics()
+        sessions = []
+        for t in topics_list:
+            if t["slug"] == slug:
+                sessions = t.get("sessions", [])
+                break
+        ws.close()
+
+        return {"jsonrpc": "2.0", "id": rid,
+                "result": {"topic": dict(topic), "sessions": sessions}}
+    except Exception as exc:
+        return _err(rid, -32000, f"wiki.get_topic failed: {exc}")

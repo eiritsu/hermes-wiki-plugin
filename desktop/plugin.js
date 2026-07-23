@@ -37,6 +37,16 @@ async function wikiBatchProcess(limit = 20) {
   catch (e) { return { enqueued: 0 } }
 }
 
+async function wikiListTopics() {
+  try { return await host.request('wiki.list_topics', {}) }
+  catch (e) { return { topics: [], count: 0 } }
+}
+
+async function wikiGetTopic(slug) {
+  try { return await host.request('wiki.get_topic', { slug }) }
+  catch (e) { return null }
+}
+
 // ── Export helpers ─────────────────────────────────────────────────────
 
 function downloadFile(filename, content) {
@@ -343,6 +353,164 @@ function ExportMenu({ selectedSlugs, onClose }) {
   })
 }
 
+// ── Topic detail view ─────────────────────────────────────────────────
+
+function TopicDetail({ topic, onBack, onSessionClick }) {
+  if (!topic) {
+    return jsx('div', {
+      className: 'flex h-full items-center justify-center text-(--ui-text-tertiary)',
+      children: 'Loading topic...'
+    })
+  }
+
+  const sessions = topic.sessions || []
+  const overview = topic.overview || ''
+  const timeline = topic.timeline || []
+  const entities = topic.entities || []
+
+  function parseSections(content) {
+    if (!content) return { overview, timeline, entities }
+    const lines = content.split('\n')
+    let current = 'overview'
+    const sections = { overview: '', timeline: '', entities: '' }
+    for (const line of lines) {
+      const lower = line.toLowerCase().trim()
+      if (lower.startsWith('## timeline') || lower.startsWith('### timeline')) { current = 'timeline'; continue }
+      if (lower.startsWith('## entities') || lower.startsWith('### entities')) { current = 'entities'; continue }
+      if (lower.startsWith('## overview') || lower.startsWith('### overview')) { current = 'overview'; continue }
+      sections[current] += line + '\n'
+    }
+    return sections
+  }
+
+  const sections = parseSections(topic.full_content)
+  const timelineEntries = sections.timeline.trim() ? sections.timeline.trim().split('\n').filter(Boolean) : timeline
+  const entityList = sections.entities.trim() ? sections.entities.trim().split(/[,\n]/).map(e => e.trim()).filter(Boolean) : entities
+
+  return jsxs('div', {
+    className: 'flex h-full flex-col',
+    children: [
+      // Header
+      jsxs('div', {
+        className: 'flex items-center gap-2 border-b border-(--ui-stroke-secondary) px-4 py-2',
+        children: [
+          jsx('button', {
+            className: 'rounded p-1 hover:bg-(--chrome-action-hover)',
+            onClick: onBack,
+            children: jsx(Codicon, { name: 'arrow-left' })
+          }),
+          jsx('span', { className: 'flex-1 truncate text-sm font-medium', children: topic.title || topic.slug }),
+          jsx(Badge, { variant: 'secondary', children: `${sessions.length} session${sessions.length !== 1 ? 's' : ''}` })
+        ]
+      }),
+      // Content
+      jsx('div', {
+        className: 'flex-1 overflow-y-auto px-4 py-3',
+        children: jsxs('div', { className: 'flex flex-col gap-4', children: [
+          // Overview
+          sections.overview.trim() && jsxs('div', { children: [
+            jsx('h3', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Overview' }),
+            jsx('div', { className: 'text-[0.8125rem] text-(--ui-text-secondary) whitespace-pre-wrap leading-relaxed', children: sections.overview.trim() })
+          ]}),
+          // Timeline
+          timelineEntries.length > 0 && jsxs('div', { children: [
+            jsx('h3', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Timeline' }),
+            jsx('div', { className: 'flex flex-col', children: timelineEntries.map((entry, i) => {
+              const entryStr = typeof entry === 'string' ? entry : (entry.label || entry.title || JSON.stringify(entry))
+              const slug = typeof entry === 'object' ? entry.slug : null
+              return jsx('button', {
+                key: i,
+                className: cn('min-h-[1.625rem] text-left text-[0.8125rem] text-(--ui-text-secondary) rounded-md px-2 py-0.5', slug ? 'cursor-pointer hover:bg-(--chrome-action-hover) hover:text-(--ui-accent)' : 'cursor-default'),
+                onClick: slug ? () => { haptic('tap'); onSessionClick(slug) } : undefined,
+                children: entryStr
+              })
+            })})
+          ]}),
+          // Entities
+          entityList.length > 0 && jsxs('div', { children: [
+            jsx('h3', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Entities' }),
+            jsx('div', { className: 'flex flex-wrap gap-1.5', children: entityList.map((entity, i) =>
+              jsx('span', { key: i, className: 'rounded-sm bg-(--ui-bg-secondary) px-1.5 py-0.5 text-[0.6875rem] text-(--ui-text-tertiary)', children: entity })
+            )})
+          ]}),
+          // Sessions list
+          sessions.length > 0 && jsxs('div', { children: [
+            jsx('h3', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Sessions' }),
+            jsx('div', { className: 'flex flex-col', children: sessions.map((s, i) =>
+              jsx('button', {
+                key: s.slug || i,
+                className: 'min-h-[1.625rem] grid grid-cols-[minmax(0,1fr)_auto] rounded-md px-2 py-0.5 text-left hover:bg-(--chrome-action-hover)',
+                onClick: () => { haptic('tap'); onSessionClick(s.slug) },
+                children: jsxs('div', { className: 'flex items-center gap-2 min-w-0', children: [
+                  jsx('span', { className: 'shrink-0 text-[0.6875rem] text-(--ui-text-tertiary)', children: s.date || '' }),
+                  jsx('span', { className: 'truncate text-[0.8125rem] text-(--ui-text-secondary)', children: s.title || s.slug })
+                ]})
+              })
+            )})
+          ]})
+        ]})
+      })
+    ]
+  })
+}
+
+// ── Topic group (collapsible tree node) ────────────────────────────────
+
+function TopicGroup({ topic, expanded, onToggle, onTopicClick, onSessionClick }) {
+  const sessions = topic.sessions || []
+
+  function statusColor(q) {
+    if (q >= 5) return '#3fb950'
+    if (q >= 4) return '#58a6ff'
+    if (q >= 3) return '#d29922'
+    return 'var(--ui-text-quaternary)'
+  }
+
+  return jsxs('div', { children: [
+    // Topic row
+    jsxs('button', {
+      className: 'min-h-[1.625rem] grid grid-cols-[minmax(0,1fr)_auto] rounded-md w-full px-3 py-1 text-left hover:bg-(--chrome-action-hover)',
+      onClick: () => onTopicClick(topic),
+      children: [
+        jsxs('div', { className: 'flex items-center gap-1.5 min-w-0', children: [
+          jsx(Codicon, { name: 'folder', className: 'shrink-0 text-(--ui-text-tertiary)' }),
+          jsx('span', { className: 'truncate text-[0.8125rem] font-medium', children: topic.title || topic.slug })
+        ]}),
+        jsxs('div', { className: 'flex items-center gap-1.5 shrink-0', children: [
+          jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-quaternary)', children: sessions.length }),
+          jsx('button', {
+            className: 'rounded p-0.5 hover:bg-(--chrome-action-hover)',
+            onClick: e => { e.stopPropagation(); onToggle(topic.slug) },
+            children: jsx(Codicon, { name: expanded ? 'chevron-down' : 'chevron-right', className: 'text-[0.625rem] text-(--ui-text-tertiary)' })
+          })
+        ]})
+      ]
+    }),
+    // Child sessions
+    expanded && jsx('div', { className: 'pl-8', children: sessions.map((s, i) =>
+      jsxs('button', {
+        className: 'min-h-[1.625rem] grid grid-cols-[minmax(0,1fr)_auto] rounded-md w-full px-2 py-0.5 text-left hover:bg-(--chrome-action-hover)',
+        onClick: () => { haptic('tap'); onSessionClick(s.slug) },
+        children: [
+          jsxs('div', { className: 'flex items-center gap-1.5 min-w-0', children: [
+            jsx('span', { className: 'shrink-0 text-[0.6875rem] text-(--ui-text-tertiary)', children: s.date || '' }),
+            jsx('span', {
+              className: 'shrink-0 size-1.5 rounded-full',
+              style: { backgroundColor: statusColor(s.quality) }
+            }),
+            jsx('span', { className: 'truncate text-[0.8125rem] text-(--ui-text-secondary)', children: s.title || s.slug })
+          ]}),
+          s.quality != null && jsx('span', {
+            className: 'shrink-0 text-[0.6875rem]',
+            style: { color: statusColor(s.quality) },
+            children: s.quality
+          })
+        ]
+      }, s.slug || i)
+    )})
+  ]})
+}
+
 // ── Main Wiki page ─────────────────────────────────────────────────────
 
 function WikiPage() {
@@ -356,6 +524,12 @@ function WikiPage() {
   const [selectMode, setSelectMode] = useState(false)
   const [checked, setChecked] = useState(new Set())
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [topics, setTopics] = useState([])
+  const [view, setView] = useState('list') // 'list' | 'topic-detail' | 'session-detail'
+  const [topicDetail, setTopicDetail] = useState(null)
+  const [expandedTopics, setExpandedTopics] = useState(new Set())
+  const [topicsSectionOpen, setTopicsSectionOpen] = useState(true)
+  const [allPagesSectionOpen, setAllPagesSectionOpen] = useState(true)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -365,6 +539,8 @@ function WikiPage() {
     ])
     setPages(listResult.pages || [])
     setStats(statsResult)
+    const topicResult = await wikiListTopics()
+    setTopics(topicResult.topics || [])
     setLoading(false)
   }, [search])
 
@@ -383,9 +559,33 @@ function WikiPage() {
     setSelected(page)
     const full = await wikiGet(page.slug)
     setDetail(full)
+    setView('session-detail')
   }
 
-  function handleBack() { setSelected(null); setDetail(null) }
+  async function handleTopicClick(topic) {
+    setView('topic-detail')
+    const full = await wikiGetTopic(topic.slug)
+    setTopicDetail(full)
+  }
+
+  function handleSessionFromTopic(slug) {
+    const page = pages.find(p => p.slug === slug)
+    if (page) handleSelect(page)
+    else { setSelected({ slug }); wikiGet(slug).then(d => { setDetail(d); setView('session-detail') }) }
+  }
+
+  function handleBack() {
+    if (view === 'topic-detail') { setView('list'); setTopicDetail(null) }
+    else { setSelected(null); setDetail(null); setView('list') }
+  }
+
+  function toggleTopicExpand(slug) {
+    setExpandedTopics(prev => {
+      const next = new Set(prev)
+      if (next.has(slug)) next.delete(slug); else next.add(slug)
+      return next
+    })
+  }
 
   function handleCheck(slug, isChecked) {
     setChecked(prev => {
@@ -409,7 +609,15 @@ function WikiPage() {
   }
 
   // Detail view
-  if (selected) {
+  if (view === 'topic-detail') {
+    return jsx(TopicDetail, {
+      topic: topicDetail,
+      onBack: handleBack,
+      onSessionClick: handleSessionFromTopic
+    })
+  }
+
+  if (view === 'session-detail' && selected) {
     return jsx(WikiDetail, {
       page: detail,
       onBack: handleBack,
@@ -493,12 +701,47 @@ function WikiPage() {
             ? jsx(EmptyState, { icon: 'book', title: search ? 'No results' : 'No wiki pages yet',
                 description: search ? 'Try a different search term' : 'Wiki pages are auto-generated from conversations, or create one manually' })
             : jsx(ScrollArea, {
-                children: pages.map(page =>
-                  jsx(WikiListItem, {
-                    page, selected: selected?.slug === page.slug, onClick: handleSelect,
-                    selectable: selectMode, checked: checked.has(page.slug), onCheck: handleCheck
-                  }, page.slug)
-                )
+                children: jsxs('div', { className: 'flex flex-col', children: [
+                  // Topics section
+                  topics.length > 0 && jsxs('div', { children: [
+                    jsxs('button', {
+                      className: 'flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-(--chrome-action-hover)',
+                      onClick: () => setTopicsSectionOpen(!topicsSectionOpen),
+                      children: [
+                        jsx(Codicon, { name: topicsSectionOpen ? 'chevron-down' : 'chevron-right', className: 'shrink-0 text-[0.5rem] text-(--ui-text-quaternary)' }),
+                        jsx('span', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide', children: 'Topics' }),
+                        jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-quaternary)', children: topics.length })
+                      ]
+                    }),
+                    topicsSectionOpen && jsx('div', { children: topics.map(t =>
+                      jsx(TopicGroup, {
+                        topic: t,
+                        expanded: expandedTopics.has(t.slug),
+                        onToggle: toggleTopicExpand,
+                        onTopicClick: handleTopicClick,
+                        onSessionClick: handleSessionFromTopic
+                      }, t.slug)
+                    )})
+                  ]}),
+                  // All Pages section
+                  jsxs('div', { children: [
+                    jsxs('button', {
+                      className: 'flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-(--chrome-action-hover)',
+                      onClick: () => setAllPagesSectionOpen(!allPagesSectionOpen),
+                      children: [
+                        jsx(Codicon, { name: allPagesSectionOpen ? 'chevron-down' : 'chevron-right', className: 'shrink-0 text-[0.5rem] text-(--ui-text-quaternary)' }),
+                        jsx('span', { className: 'text-[0.6875rem] font-medium text-(--ui-text-quaternary) uppercase tracking-wide', children: 'All Pages' }),
+                        jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-quaternary)', children: pages.length })
+                      ]
+                    }),
+                    allPagesSectionOpen && jsx('div', { children: pages.map(page =>
+                      jsx(WikiListItem, {
+                        page, selected: selected?.slug === page.slug, onClick: handleSelect,
+                        selectable: selectMode, checked: checked.has(page.slug), onCheck: handleCheck
+                      }, page.slug)
+                    )})
+                  ]})
+                ]})
               })
       }),
       // Export menu
@@ -519,6 +762,11 @@ export default {
       id: 'wiki-nav',
       area: SIDEBAR_NAV_AREA,
       data: { codicon: 'book', label: 'Wiki', path: '/wiki' }
+    })
+    ctx.register({
+      id: 'wiki-topics-nav',
+      area: SIDEBAR_NAV_AREA,
+      data: { codicon: 'library', label: 'Topics', path: '/wiki/topics' }
     })
     ctx.register({
       id: 'wiki-page',

@@ -360,9 +360,77 @@ class WikiStore:
     def get_topic_page(self, slug: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM hermes_wiki_pages WHERE slug = ? AND page_type = 'topic'", (slug,)
+                "SELECT * FROM hermes_wiki_pages WHERE slug = ? AND page_type = 'topic'", (slug,),
             ).fetchone()
             return dict(row) if row else None
+
+    def upsert_topic_page(self, slug: str, title: str, full_content: str,
+                          session_count: int = 0, topics: list = None,
+                          entities: list = None, keywords: list = None) -> int:
+        """Create or update a topic aggregation page."""
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT page_id FROM hermes_wiki_pages WHERE slug = ? AND page_type = 'topic'",
+                (slug,),
+            ).fetchone()
+            if existing:
+                self._conn.execute(
+                    """UPDATE hermes_wiki_pages
+                       SET title=?, full_content=?, message_count=?,
+                           topics=?, entities=?, keywords=?, updated_at=CURRENT_TIMESTAMP
+                       WHERE page_id=?""",
+                    (title, full_content, session_count,
+                     json.dumps(topics or [], ensure_ascii=False),
+                     json.dumps(entities or [], ensure_ascii=False),
+                     json.dumps(keywords or [], ensure_ascii=False),
+                     existing["page_id"]),
+                )
+                self._conn.commit()
+                return existing["page_id"]
+            else:
+                cur = self._conn.execute(
+                    """INSERT INTO hermes_wiki_pages
+                       (page_type, slug, title, date, language, quality, content_type,
+                        topics, keywords, entities, summary, full_content, message_count)
+                       VALUES ('topic', ?, ?, DATE('now'), 'en', 5, 'topic-aggregate',
+                               ?, ?, ?, '', ?, ?)""",
+                    (slug, title,
+                     json.dumps(topics or [], ensure_ascii=False),
+                     json.dumps(keywords or [], ensure_ascii=False),
+                     json.dumps(entities or [], ensure_ascii=False),
+                     full_content, session_count),
+                )
+                self._conn.commit()
+                return cur.lastrowid  # type: ignore[return-value]
+
+    def list_topics(self) -> list:
+        """Return all topic pages with their associated session pages."""
+        with self._lock:
+            topic_rows = self._conn.execute(
+                """SELECT slug, title, quality, date, message_count, summary,
+                          topics, entities, keywords, updated_at
+                   FROM hermes_wiki_pages WHERE page_type = 'topic'
+                   ORDER BY updated_at DESC"""
+            ).fetchall()
+            results = []
+            for t in topic_rows:
+                topic = dict(t)
+                # Find session pages that reference this topic in their topics JSON array
+                topic_slug = topic["slug"]
+                session_rows = self._conn.execute(
+                    """SELECT slug, title, date, quality, summary, source_session_id
+                       FROM hermes_wiki_pages
+                       WHERE page_type = 'session'
+                       AND (
+                           topics LIKE ? OR topics LIKE ? OR topics LIKE ?
+                       )
+                       ORDER BY date DESC""",
+                    (f'%"{topic_slug}"%', f'%"{topic_slug.replace("-", " ")}"%',
+                     f'%"{topic_slug.replace("-", "_")}"%'),
+                ).fetchall()
+                topic["sessions"] = [dict(s) for s in session_rows]
+                results.append(topic)
+            return results
 
     def update_page_content(self, page_id: int, content: str) -> None:
         with self._lock:
