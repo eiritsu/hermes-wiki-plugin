@@ -37,13 +37,13 @@ async function wikiBatchProcess(limit = 20) {
   catch (e) { return { enqueued: 0 } }
 }
 
-async function wikiListTopics() {
-  try { return await host.request('wiki.list_topics', {}) }
+async function topicList() {
+  try { return await host.request('topic.list', {}) }
   catch (e) { return { topics: [], count: 0 } }
 }
 
-async function wikiGetTopic(slug) {
-  try { return await host.request('wiki.get_topic', { slug }) }
+async function topicGet(slug) {
+  try { return await host.request('topic.get', { slug }) }
   catch (e) { return null }
 }
 
@@ -545,7 +545,7 @@ function WikiPage() {
     ])
     setPages(listResult.pages || [])
     setStats(statsResult)
-    const topicResult = await wikiListTopics()
+    const topicResult = await topicList()
     setTopics(topicResult.topics || [])
     setLoading(false)
   }, [search])
@@ -570,7 +570,7 @@ function WikiPage() {
 
   async function handleTopicClick(topic) {
     setView('topic-detail')
-    const full = await wikiGetTopic(topic.slug)
+    const full = await topicGet(topic.slug)
     setTopicDetail(full)
   }
 

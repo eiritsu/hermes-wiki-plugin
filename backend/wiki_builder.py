@@ -3,6 +3,9 @@ Wiki Builder — LLM-based session analysis and wiki page generation.
 
 Processes pending sessions from WikiStore's queue into structured wiki pages.
 Supports 7 languages via automatic detection.
+
+Topic aggregation has been moved to `topic/topic_builder.py` — this module
+only handles single-session distillation.
 """
 
 import datetime
@@ -28,74 +31,98 @@ _I18N = {
 }
 
 
-class WikiBuilder:
-    """Process pending sessions into wiki pages via LLM analysis."""
+# ── WikiStore import (with path fix for plugin context) ─────────────────────
 
-    def __init__(self, store, config: dict = None, fact_store=None):
-        self._store = store
+def _import_wiki_store():
+    """Import WikiStore with path fix for plugin runtime context."""
+    try:
+        from wiki_store import WikiStore
+        return WikiStore
+    except ImportError:
+        import sys
+        from pathlib import Path
+        backend_dir = str(Path(__file__).resolve().parent)
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        from wiki_store import WikiStore
+        return WikiStore
+
+
+class WikiBuilder:
+    """Distills a single conversation session into a structured wiki page.
+
+    Topic aggregation (cross-session integration) lives in
+    topic/topic_builder.py and uses an independent prompt + LLMClient
+    sharing only the underlying HTTP transport.
+    """
+
+    def __init__(self, config: Optional[dict] = None,
+                 store=None, fact_store=None,
+                 llm_client=None):
         self._config = config or {}
-        self._fact_store = fact_store  # Optional MemoryStore for fact extraction
+        self._fact_store = fact_store
+        WikiStoreCls = _import_wiki_store()
+        self._store = store or WikiStoreCls()
+        # Lazy LLMClient initialization
+        self._llm = llm_client
+
+    # -- Hook entry point ---------------------------------------------------
+
+    def enqueue_session(self, session_id: str, messages: list, title: str = "",
+                        source: str = "hook") -> None:
+        """Called by hooks (on_session_end / on_session_reset).
+
+        Persists messages to the SQLite queue and kicks off the worker.
+        """
+        try:
+            messages_json = json.dumps(messages, ensure_ascii=False, default=str)
+            self._store.enqueue(session_id, title, source,
+                                len(messages), messages_json)
+            logger.debug("hermes-wiki: queued session %s (%d messages)", session_id, len(messages))
+        except Exception as e:
+            logger.error("hermes-wiki: enqueue failed for %s: %s", session_id, e)
 
     def process_pending(self) -> int:
+        """Worker loop: drain the SQLite queue and process each session."""
         processed = 0
-        while True:
-            items = self._store.dequeue(limit=1)
-            if not items:
-                break
-            item = items[0]
-            try:
-                self._process_session(item)
-                self._store.mark_done(item["id"], "done")
-                processed += 1
-            except Exception as e:
-                status = self._store.retry_or_fail(item["id"], str(e))
-                logger.warning(
-                    "hermes-wiki: %s for %s after error: %s",
-                    status, item.get("session_id"), e,
-                )
-        self._cleanup()
+        try:
+            while True:
+                item = self._store.dequeue_pending()
+                if not item:
+                    break
+                try:
+                    messages = json.loads(item["messages_json"])
+                    self._process_session(
+                        session_id=item["session_id"],
+                        title=item.get("title", ""),
+                        source=item.get("source", "queue"),
+                        messages=messages,
+                        source_message_count=item.get("message_count", len(messages)),
+                        original_sid=item["session_id"],
+                    )
+                    self._store.mark_done(item["session_id"])
+                    processed += 1
+                except Exception as e:
+                    logger.error("hermes-wiki: session %s failed: %s", item["session_id"], e)
+                    self._store.mark_failed(item["session_id"], str(e))
+        except Exception as e:
+            logger.error("hermes-wiki: queue processing error: %s", e)
+        if processed:
+            logger.info("hermes-wiki: processed %d sessions from queue", processed)
         return processed
 
-    def cleanup(self) -> None:
-        """Public cleanup — can be called independently."""
-        self._cleanup()
+    # -- Session processing -------------------------------------------------
 
-    def _cleanup(self) -> None:
-        """Remove low-quality pages and stale queue entries."""
-        try:
-            with self._store._lock:
-                # 1. Delete quality < 4 session pages
-                self._store._conn.execute(
-                    "DELETE FROM hermes_wiki_pages WHERE quality < 4 AND page_type = 'session'"
-                )
-                # 2. Clean up done/failed queue entries
-                self._store._conn.execute(
-                    "DELETE FROM hermes_wiki_pending_queue WHERE status IN ('done', 'failed')"
-                )
-                self._store._conn.commit()
-            logger.debug("hermes-wiki: cleanup done")
-        except Exception as e:
-            logger.debug("hermes-wiki: cleanup failed: %s", e)
+    def _process_session(self, session_id: str, title: str, source: str,
+                         messages: list, source_message_count: int,
+                         original_sid: str) -> None:
+        date = self._date_from_id(session_id)
 
-    def _process_session(self, item: dict) -> None:
-        queue_key = item["session_id"]  # sid:date format
-        original_sid = item.get("original_session_id") or queue_key
-        title = item.get("title", "") or ""
-        source = item.get("source", "")
-        messages = item.get("messages", [])
-        source_message_count = int(item.get("message_count") or len(messages))
-        date = item.get("latest_date") or self._date_from_id(original_sid)
-
-        # Check if this date segment is already processed with same or more messages
-        if self._store.is_date_processed(queue_key) and source_message_count <= self._store.date_message_count(queue_key):
-            return
-
-        filtered = []
+        # Filter and truncate messages for LLM input
+        filtered: List[Dict[str, str]] = []
         for msg in messages:
-            if msg.get("role") not in ("user", "assistant"):
-                continue
-            content = msg.get("content", "")
-            if not content or not isinstance(content, str):
+            content = msg.get("content") or msg.get("text") or ""
+            if not content.strip():
                 continue
             if len(content) > _MAX_MSG_LEN:
                 content = content[: _MAX_MSG_LEN // 2] + "\n...[truncated]...\n" + content[-_MAX_MSG_LEN // 2:]
@@ -152,8 +179,8 @@ class WikiBuilder:
 
         if quality < 4:
             self._store.delete_low_quality_session_page(original_sid)
-            self._store.record_session_state(queue_key, source_message_count, quality)
-            logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", queue_key, quality)
+            self._store.record_session_state(session_id, source_message_count, quality)
+            logger.info("hermes-wiki: discarded low-quality page for %s (q=%d)", session_id, quality)
             return
 
         # Extract facts to holographic memory (extension mode only)
@@ -161,7 +188,7 @@ class WikiBuilder:
         if facts and self._fact_store:
             self._extract_facts(facts, original_sid)
 
-        self._store.record_session_state(queue_key, source_message_count, quality)
+        self._store.record_session_state(session_id, source_message_count, quality)
         logger.info("hermes-wiki: %s (q=%d, topics=%s, facts=%d)", slug, quality, topics, len(facts))
 
     # -- Fact extraction to holographic memory ----------------------------
@@ -188,283 +215,23 @@ class WikiBuilder:
             except Exception as e:
                 logger.debug("hermes-wiki: fact extraction failed: %s", e)
 
-    # -- Topic page aggregation -------------------------------------------
-
-    def _update_topic_pages(self, topics: list, analysis: dict) -> None:
-        """Create or update topic aggregation pages for the given topics."""
-        session_meta = {
-            "title": analysis.get("title", ""),
-            "date": analysis.get("date", ""),
-            "summary": (analysis.get("result") or analysis.get("background") or "")[:200],
-            "decisions": analysis.get("decisions", []),
-            "entities": analysis.get("entities", []),
-            "quality": analysis.get("quality", 0),
-        }
-        for topic_slug in topics:
-            if not topic_slug or not isinstance(topic_slug, str):
-                continue
-            topic_slug = topic_slug.strip().lower().replace(" ", "-")
-            if len(topic_slug) < 2:
-                continue
-            try:
-                self._update_single_topic(topic_slug, session_meta)
-            except Exception as e:
-                logger.debug("hermes-wiki: topic update failed for %s: %s", topic_slug, e)
-
-    def _update_single_topic(self, topic_slug: str, session_meta: dict) -> None:
-        """Update a single topic page — append session to timeline."""
-        existing = self._store.get_topic_page(topic_slug)
-        title = topic_slug.replace("-", " ").title()
-
-        if existing:
-            # Parse existing content and append new session
-            content = existing.get("full_content", "")
-            count = (existing.get("message_count") or 0) + 1
-            # Append to timeline section
-            date = session_meta.get("date", "")
-            stitle = session_meta.get("title", "")
-            summary = session_meta.get("summary", "")
-            new_entry = f"- [[{date}_{stitle}]] — {summary}"
-            if "## Timeline" in content:
-                content = content.replace("## Timeline\n", f"## Timeline\n{new_entry}\n", 1)
-            else:
-                content += f"\n## Timeline\n{new_entry}\n"
-            # Update overview with count
-            overview_line = f"包含 {count} 个相关会话的讨论记录。"
-            if "## Overview" in content:
-                import re
-                content = re.sub(
-                    r"(## Overview\n).*?(?=\n## |\Z)",
-                    f"\\1{overview_line}\n",
-                    content, count=1, flags=re.DOTALL,
-                )
-            self._store.upsert_topic_page(
-                slug=topic_slug, title=title, full_content=content,
-                session_count=count,
-            )
-            logger.debug("hermes-wiki: topic %s updated (%d sessions)", topic_slug, count)
-        else:
-            # Create new topic page
-            date = session_meta.get("date", "")
-            stitle = session_meta.get("title", "")
-            summary = session_meta.get("summary", "")
-            entities = session_meta.get("entities", [])
-            content = f"""---
-page_type: topic
-topic: {topic_slug}
-updated: {date}
----
-
-# {title}
-
-## Overview
-首个相关会话：{stitle}
-
-## Timeline
-- [[{date}_{stitle}]] — {summary}
-
-## Entities
-{chr(10).join(f'- {e}' for e in entities) if entities else '- (none yet)'}
-"""
-            self._store.upsert_topic_page(
-                slug=topic_slug, title=title, full_content=content,
-                session_count=1, entities=entities,
-            )
-            logger.debug("hermes-wiki: topic %s created", topic_slug)
-
-    def aggregate_topics(self) -> int:
-        """Rebuild topic aggregation pages from session pages.
-
-        Scans all session pages with quality >= 4 and non-empty topics,
-        groups by topic slug, and recreates topic pages. Independent of
-        session processing — runs on its own timer.
-        """
-        import json as _json
-
-        rows = self._store._conn.execute(
-            """SELECT slug, title, date, quality, summary, topics, entities
-               FROM hermes_wiki_pages
-               WHERE page_type = 'session' AND quality >= 4
-               ORDER BY date ASC""",
-        ).fetchall()
-
-        topic_sessions = {}  # topic_slug -> [session_meta, ...]
-        for row in rows:
-            topics_raw = row["topics"] or "[]"
-            try:
-                topic_list = _json.loads(topics_raw) if isinstance(topics_raw, str) else topics_raw
-            except (ValueError, TypeError):
-                topic_list = []
-            if not isinstance(topic_list, list):
-                continue
-            for t in topic_list:
-                if not t or not isinstance(t, str):
-                    continue
-                t = t.strip().lower().replace(" ", "-")
-                if len(t) < 2:
-                    continue
-                topic_sessions.setdefault(t, []).append({
-                    "title": row["title"] or row["slug"],
-                    "date": row["date"] or "",
-                    "summary": (row["summary"] or "")[:200],
-                    "quality": row["quality"] or 0,
-                    "entities": row["entities"] or "[]",
-                })
-
-        if not topic_sessions:
-            return 0
-
-        updated = 0
-        for topic_slug, sessions in topic_sessions.items():
-            if len(sessions) < 2:
-                continue  # Skip single-session topics — not meaningful aggregation
-            try:
-                self._rebuild_topic_page(topic_slug, sessions)
-                updated += 1
-            except Exception as e:
-                logger.debug("hermes-wiki: topic rebuild failed for %s: %s", topic_slug, e)
-
-        logger.info("hermes-wiki: aggregated %d topics from %d session pages", updated, len(rows))
-        return updated
-
-    def _rebuild_topic_page(self, topic_slug: str, sessions: list) -> None:
-        """Rebuild a single topic page from its session list."""
-        title = topic_slug.replace("-", " ").title()
-        count = len(sessions)
-
-        # Merge entities from all sessions
-        all_entities = set()
-        for s in sessions:
-            try:
-                import json as _json
-                ents = _json.loads(s["entities"]) if isinstance(s["entities"], str) else s["entities"]
-                if isinstance(ents, list):
-                    all_entities.update(str(e) for e in ents if e)
-            except Exception:
-                pass
-
-        # Build overview
-        overview = f"包含 {count} 个相关会话的讨论记录。" if count > 1 else f"首个相关会话：{sessions[0]['title']}"
-
-        # Build timeline
-        timeline_lines = []
-        for s in sessions:
-            timeline_lines.append(f"- [[{s['date']}_{s['title']}]] — {s['summary']}")
-
-        # Build markdown content
-        content = f"""---
-page_type: topic
-topic: {topic_slug}
-updated: {sessions[-1]['date'] if sessions else ''}
----
-
-# {title}
-
-## Overview
-{overview}
-
-## Timeline
-{chr(10).join(timeline_lines)}
-
-## Entities
-{chr(10).join(f'- {e}' for e in sorted(all_entities)) if all_entities else '- (none yet)'}
-"""
-        self._store.upsert_topic_page(
-            slug=topic_slug, title=title, full_content=content,
-            session_count=count, entities=list(all_entities),
-        )
-
     # -- LLM call -----------------------------------------------------------
 
     def _call_llm(self, messages: list, title: str, source: str) -> Optional[dict]:
-        import httpx
-
-        # Ensure .env is loaded for API key resolution
-        try:
-            from hermes_cli.env_loader import load_hermes_dotenv
-            from hermes_constants import get_hermes_home
-            load_hermes_dotenv(hermes_home=get_hermes_home())
-        except Exception:
-            pass
-
-        provider = self._config.get("provider", "")
-        model = self._config.get("model", "")
-        api_key = self._config.get("api_key", "")
-        base_url = self._config.get("base_url", "")
-
-        if not model or not provider:
-            try:
-                import yaml
-                from hermes_constants import get_hermes_home
-                cfg_path = get_hermes_home() / "config.yaml"
-                if cfg_path.exists():
-                    with open(cfg_path) as f:
-                        cfg = yaml.safe_load(f) or {}
-                    mc = cfg.get("model", {})
-                    model = model or mc.get("default", "") or mc.get("model", "")
-                    provider = provider or mc.get("provider", "")
-                    base_url = base_url or mc.get("base_url", "")
-                    api_key = api_key or mc.get("api_key", "")
-            except Exception:
-                pass
-
-        if not model:
-            logger.warning("No model configured, skipping LLM call")
+        """Send session chat to LLM via shared LLMClient, parse session-schema JSON."""
+        from llm_client import LLMClient
+        if self._llm is None:
+            self._llm = LLMClient(config=self._config)
+        user_prompt = self._format_msgs(messages, title, source)
+        raw = self._llm.send_request(
+            system_prompt=self._prompt(),
+            user_prompt=user_prompt,
+            max_tokens=2000,
+            temperature=0.3,
+        )
+        if raw is None:
             return None
-
-        if not base_url:
-            base_url = self._resolve_url(provider)
-        if not base_url:
-            logger.warning("Cannot resolve base_url for %s", provider)
-            return None
-
-        if not api_key:
-            api_key = self._resolve_key(provider)
-        if not api_key:
-            api_key = "no-key"
-
-        msgs = [
-            {"role": "system", "content": self._prompt()},
-            {"role": "user", "content": self._format_msgs(messages, title, source)},
-        ]
-
-        try:
-            with httpx.Client(timeout=httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)) as client:
-                # Detect API format from URL
-                if "/anthropic" in base_url:
-                    # Anthropic Messages API
-                    anthropic_msgs = [{"role": "user", "content": msgs[1]["content"]}]
-                    resp = client.post(
-                        f"{base_url.rstrip('/')}/v1/messages",
-                        json={"model": model, "max_tokens": 4096,
-                              "system": msgs[0]["content"],
-                              "messages": anthropic_msgs},
-                        headers={"Content-Type": "application/json",
-                                 "x-api-key": api_key,
-                                 "anthropic-version": "2023-06-01"},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    try:
-                        content = data["content"][0]["text"]
-                    except (KeyError, IndexError, TypeError) as e:
-                        logger.error("hermes-wiki: unexpected Anthropic response: %s", e)
-                        return None
-                else:
-                    # OpenAI Chat Completions API
-                    resp = client.post(
-                        f"{base_url.rstrip('/')}/chat/completions",
-                        json={"model": model, "messages": msgs,
-                              "max_tokens": 2000, "temperature": 0.3},
-                        headers={"Content-Type": "application/json",
-                                 "Authorization": f"Bearer {api_key}"},
-                    )
-                    resp.raise_for_status()
-                    content = resp.json()["choices"][0]["message"]["content"]
-            return self._extract_json(content)
-        except Exception as e:
-            logger.error("hermes-wiki: LLM failed: %s", e)
-            return None
+        return self._extract_json(raw)
 
     def _prompt(self) -> str:
         """Load prompt from prompts/default.md, fallback to built-in."""
@@ -516,47 +283,6 @@ updated: {sessions[-1]['date'] if sessions else ''}
                 continue
         return None
 
-    # -- URL/key resolution (uses Hermes provider system) -----------------
-
-    @staticmethod
-    def _resolve_url(provider: str) -> Optional[str]:
-        """Resolve base URL — same logic as Hermes agent."""
-        import os
-        try:
-            from hermes_cli.providers import resolve_provider_full
-            pdef = resolve_provider_full(provider)
-            if pdef:
-                # Env var override takes precedence (same as agent)
-                if pdef.base_url_env_var and os.environ.get(pdef.base_url_env_var):
-                    return os.environ[pdef.base_url_env_var].rstrip("/")
-                if pdef.base_url:
-                    return pdef.base_url.rstrip("/")
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _resolve_key(provider: str) -> Optional[str]:
-        """Resolve API key via Hermes's provider system."""
-        import os
-        try:
-            from hermes_cli.providers import resolve_provider_full
-            pdef = resolve_provider_full(provider)
-            if pdef and pdef.api_key_env_vars:
-                for env_var in pdef.api_key_env_vars:
-                    val = os.environ.get(env_var, "")
-                    if val:
-                        return val
-        except Exception:
-            pass
-        # Fallback: try provider-specific env var pattern
-        # e.g., opencode-zen -> OPENCODE_ZEN_API_KEY
-        fallback_var = f"{provider.upper().replace('-', '_')}_API_KEY"
-        val = os.environ.get(fallback_var, "")
-        if val:
-            return val
-        return None
-
     # -- Defaults & helpers -------------------------------------------------
 
     def _default(self, title: str) -> dict:
@@ -601,4 +327,16 @@ updated: {sessions[-1]['date'] if sessions else ''}
     def _slug(self, date: str, title: str) -> str:
         s = re.sub(r"[^\w\s-]", "", title.lower())
         s = re.sub(r"[\s_]+", "-", s).strip("-")[:40]
-        return f"{date}_{s or 'session'}"
+        return f"{date}_{s}" if s else f"{date}_untitled"
+
+    # -- HTTP/auth helpers (forwarded to LLMClient) -------------------------
+
+    @staticmethod
+    def _resolve_url(provider: str) -> Optional[str]:
+        from llm_client import LLMClient
+        return LLMClient._resolve_url(provider)
+
+    @staticmethod
+    def _resolve_key(provider: str) -> Optional[str]:
+        from llm_client import LLMClient
+        return LLMClient._resolve_key(provider)
