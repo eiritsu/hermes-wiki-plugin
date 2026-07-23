@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent)용 Karpathy LLM Wiki 패턴 플러그인 — 세션에서 wiki 페이지로 자동 변환, 품질 점수, 주제 분류, 엔티티 추출, 7개 언어 i18n 지원.
 
-> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+> 🌐 [English](../README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
 ## 이 플러그인이 필요한 이유
 

@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的 Karpathy LLM Wiki 模式插件 — 自动将对话 session 转换为结构化 wiki 页面，支持质量评分、主题分类、实体提取和 7 语言 i18n。
 
-> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+> 🌐 [English](../README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
 ## 为什么需要这个插件
 
@@ -214,6 +214,8 @@ hermes-wiki-plugin/
 │   ├── plugin.yaml          — 插件元数据
 │   └── prompts/default.md   — 分析提示词
 ├── desktop/plugin.js         — Hermes Desktop Wiki 侧栏 GUI（双面板布局，运行时 CSS 注入兼容 Tailwind）
+├── docs/                       — 多语言 README（zh/ja/ko/de/fr/es）
+├── README.md                   — 英文文档
 └── install.sh                — 同时安装后端和 Desktop 组件
 ```
 

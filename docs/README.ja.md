@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) の Karpathy LLM Wiki パターンプラグイン — セッションから wiki ページへの自動変換、品質スコアリング、トピック分類、エンティティ抽出、7言語 i18n 対応。
 
-> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+> 🌐 [English](../README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
 ## なぜこのプラグインが必要か
 

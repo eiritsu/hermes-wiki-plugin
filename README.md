@@ -1,6 +1,6 @@
 # hermes-wiki-plugin
 
-> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+> 🌐 [English](README.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md)
 
 Karpathy LLM Wiki pattern for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — automatic session-to-wiki conversion with quality scoring, topic classification, entity extraction, and 7-language i18n.
 
@@ -216,6 +216,8 @@ hermes-wiki-plugin/
 │   ├── plugin.yaml          — plugin metadata
 │   └── prompts/default.md   — analysis prompt
 ├── desktop/plugin.js         — Hermes Desktop Wiki sidebar GUI (dual-panel, runtime CSS injection for Tailwind compatibility)
+├── docs/                       — multilingual READMEs (zh/ja/ko/de/fr/es)
+├── README.md                   — English documentation
 └── install.sh                — installs backend and Desktop components
 ```
 

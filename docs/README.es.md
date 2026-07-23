@@ -2,7 +2,7 @@
 
 Plugin Karpathy LLM Wiki para [Hermes Agent](https://github.com/NousResearch/hermes-agent) — conversión automática de sesiones a páginas wiki con puntuación de calidad, clasificación de temas, extracción de entidades e i18n en 7 idiomas.
 
-> 🌐 [English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
+> 🌐 [English](../README.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md)
 
 ## ¿Por qué este plugin?
 
