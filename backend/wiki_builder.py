@@ -269,9 +269,14 @@ class WikiBuilder:
         return self._extract_json(raw)
 
     def _prompt(self) -> str:
-        """Load prompt from prompts/default.md, fallback to built-in."""
+        """Load the session wiki prompt from prompts/wiki.md.
+
+        This is the session → wiki workflow prompt. The topic aggregation
+        workflow uses a different prompt (prompts/topic.md) loaded by
+        topic/topic_builder._topic_prompt().
+        """
         try:
-            prompt_path = Path(__file__).parent / "prompts" / "default.md"
+            prompt_path = Path(__file__).parent / "prompts" / "wiki.md"
             if prompt_path.exists():
                 return prompt_path.read_text(encoding="utf-8")
         except Exception:

@@ -184,7 +184,7 @@ hermes-wiki-plugin/
 │   │   ├── topic_builder.py — LLM 主题聚合，基于脏标记的增量处理
 │   │   └── topic_rpc.py     — topic.* RPC 方法（list、get）
 │   ├── prompts/
-│   │   ├── default.md       — session 分析提示词
+│   │   ├── wiki.md          — session → wiki 提示词
 │   │   └── topic.md         — 主题聚合提示词
 │   └── plugin.yaml          — 插件元数据
 ├── desktop/

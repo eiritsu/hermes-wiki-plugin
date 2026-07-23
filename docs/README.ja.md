@@ -184,7 +184,7 @@ hermes-wiki-plugin/
 │   │   ├── topic_builder.py — LLMトピック集約（ダーティマーカーインクリメンタル処理）
 │   │   └── topic_rpc.py     — topic.* RPCメソッド（list, get）
 │   ├── prompts/
-│   │   ├── default.md       — セッション分析プロンプト
+│   │   ├── wiki.md          — session → wiki プロンプト
 │   │   └── topic.md         — トピック集約プロンプト
 │   └── plugin.yaml          — プラグインメタデータ
 ├── desktop/

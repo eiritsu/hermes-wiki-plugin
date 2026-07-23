@@ -179,7 +179,7 @@ hermes-wiki-plugin/
 │   │   ├── topic_builder.py — LLM 주제 집계 (더티 마커 기반 증분 처리)
 │   │   └── topic_rpc.py     — topic.* RPC 메서드 (list, get)
 │   ├── prompts/
-│   │   ├── default.md       — 세션 분석 프롬프트
+│   │   ├── wiki.md          — session → wiki 프롬프트
 │   │   └── topic.md         — 주제 집계 프롬프트
 │   └── plugin.yaml          — 플러그인 메타데이터
 ├── desktop/

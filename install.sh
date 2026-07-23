@@ -37,7 +37,7 @@ done
 
 # Prompts
 mkdir -p "$BACKEND_DST/prompts"
-for f in default.md topic.md; do
+for f in wiki.md topic.md; do
   if [ -f "$BACKEND_SRC/prompts/$f" ]; then
     cp "$BACKEND_SRC/prompts/$f" "$BACKEND_DST/prompts/"
   fi

@@ -186,7 +186,7 @@ hermes-wiki-plugin/
 │   │   ├── topic_builder.py — LLM topic aggregation with dirty-marker incremental processing
 │   │   └── topic_rpc.py     — topic.* RPC methods (list, get)
 │   ├── prompts/
-│   │   ├── default.md       — session analysis prompt
+│   │   ├── wiki.md          — session → wiki prompt
 │   │   └── topic.md         — topic aggregation prompt
 │   └── plugin.yaml          — plugin metadata
 ├── desktop/
