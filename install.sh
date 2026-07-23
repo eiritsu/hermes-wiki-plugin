@@ -5,9 +5,10 @@
 set -euo pipefail
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-BACKEND_SRC="$(cd "$(dirname "$0")/backend" && pwd)"
-DESKTOP_SRC="$(cd "$(dirname "$0")/desktop" && pwd)"
-PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/gateway-rpc.patch"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_SRC="$REPO_ROOT/backend"
+DESKTOP_SRC="$REPO_ROOT/desktop"
+PATCH_FILE="$REPO_ROOT/gateway-rpc.patch"
 
 BACKEND_DST="$HERMES_HOME/plugins/hermes_wiki"
 DESKTOP_DST="$HERMES_HOME/desktop-plugins/hermes-wiki"
@@ -17,10 +18,22 @@ echo ""
 
 # Backend plugin
 mkdir -p "$BACKEND_DST/prompts"
-for f in plugin.yaml __init__.py wiki_store.py wiki_builder.py wiki_rpc.py; do
+mkdir -p "$BACKEND_DST/topic"
+
+# Core backend files
+for f in plugin.yaml __init__.py wiki_store.py wiki_builder.py wiki_rpc.py llm_client.py rpc_utils.py; do
   cp "$BACKEND_SRC/$f" "$BACKEND_DST/"
 done
+
+# Topic submodule
+for f in __init__.py topic_builder.py topic_rpc.py topic_store.py; do
+  cp "$BACKEND_SRC/topic/$f" "$BACKEND_DST/topic/"
+done
+
+# Prompts
 cp "$BACKEND_SRC/prompts/default.md" "$BACKEND_DST/prompts/"
+cp "$BACKEND_SRC/prompts/topic.md" "$BACKEND_DST/prompts/"
+
 echo "  Backend  -> $BACKEND_DST"
 
 # Desktop plugin
@@ -74,10 +87,6 @@ if isinstance(toolsets, list) and 'wiki' not in toolsets:
 if isinstance(toolsets, list) and 'hermes-wiki' in toolsets:
     toolsets.remove('hermes-wiki')
     changed = True
-# Remove memory if we previously added it (wiki_search is no longer there)
-if isinstance(toolsets, list) and 'memory' in toolsets and 'memory' not in ('hermes-cli',):
-    # Only remove if it was added by us (not by user intentionally)
-    pass  # keep memory — user may have other reasons
 if changed:
     cfg['toolsets'] = toolsets
     with open(cfg_path, 'w') as f:
