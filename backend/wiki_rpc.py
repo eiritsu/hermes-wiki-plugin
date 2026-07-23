@@ -3,12 +3,17 @@ Gateway JSON-RPC handlers for hermes-wiki.
 
 Each handler has signature: handler(rid, params) -> dict
 These are registered via ctx.register_rpc() in __init__.py.
+
+Topic RPCs (topic.list, topic.get) live in topic/topic_rpc.py — this
+file only handles session wiki RPCs. Shared plumbing is in rpc_utils.
 """
 
 import json
 import sqlite3
 import logging
 from typing import Any
+
+from rpc_utils import _err, parse_json_columns  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +31,9 @@ def _get_wiki_db():
     return _wiki_db
 
 
-def _err(rid, code, msg):
-    return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": msg}}
-
-
 def _row_to_dict(row):
-    d = dict(row)
-    for key in ("topics", "keywords", "entities"):
-        if d.get(key) and isinstance(d[key], str):
-            try:
-                d[key] = json.loads(d[key])
-            except (json.JSONDecodeError, TypeError):
-                d[key] = []
-    return d
+    """Backward-compat wrapper around rpc_utils.parse_json_columns."""
+    return parse_json_columns(dict(row))
 
 
 def wiki_list(rid, params):
@@ -268,65 +263,3 @@ def wiki_batch_process(rid, params):
                            "total_sessions": len(sessions), "already_processed": len(processed)}}
     except Exception as exc:
         return _err(rid, -32000, f"wiki.batch_process failed: {exc}")
-
-
-def wiki_list_topics(rid, params):
-    """Return all topic pages with their associated session pages."""
-    try:
-        import sys as _sys
-        from pathlib import Path as _Path
-        plugins_dir = str(_Path(__file__).resolve().parent.parent)
-        if plugins_dir not in _sys.path:
-            _sys.path.insert(0, plugins_dir)
-        from hermes_constants import get_hermes_home
-        from hermes_wiki.wiki_store import WikiStore
-
-        ws = WikiStore()
-        topics = ws.list_topics()
-        ws.close()
-
-        # Simplify session data for frontend
-        for t in topics:
-            for s in t.get("sessions", []):
-                s.pop("source_session_id", None)
-
-        return {"jsonrpc": "2.0", "id": rid,
-                "result": {"topics": topics, "count": len(topics)}}
-    except Exception as exc:
-        return _err(rid, -32000, f"wiki.list_topics failed: {exc}")
-
-
-def wiki_get_topic(rid, params):
-    """Return a topic page with its full content and associated sessions."""
-    try:
-        slug = params.get("slug", "")
-        if not slug:
-            return _err(rid, -32602, "Missing 'slug' parameter")
-
-        from hermes_constants import get_hermes_home
-        import sys as _sys
-        from pathlib import Path as _Path
-        plugins_dir = str(_Path(__file__).resolve().parent.parent)
-        if plugins_dir not in _sys.path:
-            _sys.path.insert(0, plugins_dir)
-        from hermes_wiki.wiki_store import WikiStore
-
-        ws = WikiStore()
-        topic = ws.get_topic_page(slug)
-        if not topic:
-            ws.close()
-            return _err(rid, -32001, f"Topic '{slug}' not found")
-
-        # Get associated sessions
-        topics_list = ws.list_topics()
-        sessions = []
-        for t in topics_list:
-            if t["slug"] == slug:
-                sessions = t.get("sessions", [])
-                break
-        ws.close()
-
-        return {"jsonrpc": "2.0", "id": rid,
-                "result": {"topic": dict(topic), "sessions": sessions}}
-    except Exception as exc:
-        return _err(rid, -32000, f"wiki.get_topic failed: {exc}")
