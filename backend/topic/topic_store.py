@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS hermes_wiki_topics (
 
 CREATE INDEX IF NOT EXISTS idx_hermes_wiki_topics_slug ON hermes_wiki_topics(slug);
 CREATE INDEX IF NOT EXISTS idx_hermes_wiki_topics_updated ON hermes_wiki_topics(updated_at);
+
+CREATE TABLE IF NOT EXISTS hermes_wiki_topic_dirty (
+    topic_slug      TEXT PRIMARY KEY,
+    changed_pages   TEXT,        -- JSON: ["2026-07-23_slug1", "2026-07-20_slug2"]
+    dirty_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -262,3 +268,65 @@ class TopicStore:
             conn.commit()
             logger.info("hermes-wiki: migrated %d topic pages from hermes_wiki_pages", migrated)
         return migrated
+
+    # -- Dirty marker CRUD (incremental topic aggregation) ------------------
+
+    def mark_dirty(self, topic_slug: str, changed_session_slug: str) -> None:
+        """Mark a topic as dirty after a wiki page changes.
+
+        Called by WikiBuilder._process_session after writing a wiki page.
+        Uses INSERT OR UPDATE to accumulate changed pages.
+        """
+        conn = self._connect()
+        existing = conn.execute(
+            "SELECT changed_pages FROM hermes_wiki_topic_dirty WHERE topic_slug = ?",
+            (topic_slug,)
+        ).fetchone()
+
+        if existing:
+            # Append to existing dirty list
+            try:
+                pages = json.loads(existing["changed_pages"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                pages = []
+            if changed_session_slug not in pages:
+                pages.append(changed_session_slug)
+            conn.execute(
+                """UPDATE hermes_wiki_topic_dirty
+                   SET changed_pages = ?, dirty_at = CURRENT_TIMESTAMP
+                   WHERE topic_slug = ?""",
+                (json.dumps(pages, ensure_ascii=False), topic_slug),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO hermes_wiki_topic_dirty
+                   (topic_slug, changed_pages)
+                   VALUES (?, ?)""",
+                (topic_slug, json.dumps([changed_session_slug], ensure_ascii=False)),
+            )
+        conn.commit()
+
+    def get_dirty_topics(self) -> list[dict]:
+        """Return all dirty topic slugs and their changed page slugs."""
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT topic_slug, changed_pages, dirty_at FROM hermes_wiki_topic_dirty"
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["changed_pages"] = json.loads(d.get("changed_pages") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                d["changed_pages"] = []
+            result.append(d)
+        return result
+
+    def clear_dirty(self, topic_slug: str) -> None:
+        """Clear dirty marker after topic aggregation succeeds."""
+        conn = self._connect()
+        conn.execute(
+            "DELETE FROM hermes_wiki_topic_dirty WHERE topic_slug = ?",
+            (topic_slug,)
+        )
+        conn.commit()

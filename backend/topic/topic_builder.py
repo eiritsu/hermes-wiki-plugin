@@ -67,17 +67,30 @@ class TopicBuilder:
     # -- Main aggregation entry point --------------------------------------
 
     def aggregate_topics(self) -> int:
-        """Scan all sessions, group by topic slug, integrate each topic via LLM.
+        """Incremental topic aggregation — only process dirty topics.
 
-        Returns number of topic pages updated (or skipped due to cache hit).
+        Reads hermes_wiki_topic_dirty for topics that need re-aggregation,
+        fetches their wiki pages, calls LLM to integrate, then clears dirty.
+        Returns number of topics updated.
         """
-        sessions = self._store.list_session_full_content()
-        if not sessions:
+        dirty_topics = self._store.get_dirty_topics()
+        if not dirty_topics:
+            logger.debug("hermes-wiki: no dirty topics, skipping aggregation")
             return 0
 
-        # Group sessions by topic slug
+        # Build a lookup: topic_slug -> list of changed page slugs
+        dirty_map: dict[str, list[str]] = {}
+        for d in dirty_topics:
+            dirty_map[d["topic_slug"]] = d.get("changed_pages", [])
+
+        # Read all wiki pages once (batch)
+        all_sessions = self._store.list_session_full_content()
+        if not all_sessions:
+            return 0
+
+        # Group all sessions by topic (for later lookup)
         topic_sessions: dict[str, list[dict]] = defaultdict(list)
-        for s in sessions:
+        for s in all_sessions:
             for t in s.get("topics", []):
                 if not t or not isinstance(t, str):
                     continue
@@ -86,22 +99,39 @@ class TopicBuilder:
                     continue
                 topic_sessions[slug].append(s)
 
-        # Skip topics with <2 sessions — no meaningful aggregation
+        # Process only dirty topics
         updated = 0
-        for topic_slug, t_sessions in topic_sessions.items():
+        for topic_slug in dirty_map:
+            t_sessions = topic_sessions.get(topic_slug, [])
             if len(t_sessions) < 2:
+                # Not enough sessions — clear dirty without aggregation
+                self._store.clear_dirty(topic_slug)
                 continue
             try:
                 if self._aggregate_topic(topic_slug, t_sessions):
                     updated += 1
+                    logger.info("hermes-wiki: topic %s aggregated", topic_slug)
+                else:
+                    # Cache hit — sessions unchanged since last LLM run
+                    self._store.clear_dirty(topic_slug)
             except Exception as e:
                 logger.debug("hermes-wiki: topic %s aggregation failed: %s", topic_slug, e)
-        logger.info("hermes-wiki: aggregated %d topics from %d session pages", updated, len(sessions))
+                # Leave dirty — retry next cycle
+
+        logger.info("hermes-wiki: aggregated %d/%d dirty topics", updated, len(dirty_map))
         return updated
 
     def _aggregate_topic(self, topic_slug: str, sessions: list[dict]) -> bool:
-        """Aggregate a single topic. Returns True if topic page was written to DB
-        (LLM success OR fallback). Returns False only on cache hit (no work done)."""
+        """Aggregate a single topic.
+
+        Returns:
+            True  — LLM integration succeeded (topic page written with full content)
+            False — cache hit (no work needed, sessions unchanged since last LLM run)
+
+        On LLM failure: writes fallback topic page AND re-marks topic as dirty
+        so the next cycle retries LLM. Caller should NOT clear dirty on False
+        return from fallback.
+        """
         # Sort by date ascending (oldest first → evolution trace)
         sessions = sorted(sessions, key=lambda s: s.get("date", ""))
 
@@ -110,7 +140,7 @@ class TopicBuilder:
         existing = self._store.get_topic(topic_slug)
         if existing and existing.get("full_content"):
             cached_sig = self._extract_signature_from_content(existing["full_content"])
-            if cached_sig == signature:
+            if cached_sig == signature and "|fallback" not in (cached_sig or ""):
                 logger.debug("hermes-wiki: topic %s cache hit, skipping LLM", topic_slug)
                 return False
 
@@ -121,14 +151,24 @@ class TopicBuilder:
             logger.info("hermes-wiki: topic %s too large (%d chars), using fallback",
                         topic_slug, total_chars)
             self._fallback_topic(topic_slug, truncated)
-            return True  # fallback still wrote the topic page
+            # Re-mark dirty so next cycle retries LLM
+            try:
+                self._store.mark_dirty(topic_slug, "__fallback_retry__")
+            except Exception:
+                pass
+            return True  # topic page was written (fallback content)
 
         # Call LLM
         analysis = self._call_topic_llm(topic_slug, truncated)
         if analysis is None:
             logger.info("hermes-wiki: topic %s LLM failed, using fallback", topic_slug)
             self._fallback_topic(topic_slug, truncated)
-            return True  # fallback still wrote the topic page
+            # Re-mark dirty so next cycle retries LLM
+            try:
+                self._store.mark_dirty(topic_slug, "__fallback_retry__")
+            except Exception:
+                pass
+            return True  # topic page was written (fallback content)
 
         # Inject signature into full_content YAML frontmatter (cache key)
         full_content = analysis.get("full_content", "")
@@ -148,6 +188,8 @@ class TopicBuilder:
             sessions=session_slugs,
             language=language,
         )
+        # Clear dirty — LLM integration succeeded
+        self._store.clear_dirty(topic_slug)
         return True
 
     # -- LLM call -----------------------------------------------------------
@@ -281,7 +323,7 @@ class TopicBuilder:
 
         full_content = f"""---
 type: topic-aggregate
-aggregation_sig: {self._compute_signature(topic_slug, sessions)}
+aggregation_sig: {self._compute_signature(topic_slug, sessions)}|fallback
 sessions: {count}
 updated: {sessions[-1].get('date', '') if sessions else ''}
 ---

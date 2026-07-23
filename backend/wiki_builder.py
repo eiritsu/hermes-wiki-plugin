@@ -65,6 +65,8 @@ class WikiBuilder:
         self._store = store or WikiStoreCls()
         # Lazy LLMClient initialization
         self._llm = llm_client
+        # Lazy TopicStore for dirty marker writes
+        self._topic_store = None
 
     # -- Hook entry point ---------------------------------------------------
 
@@ -189,7 +191,40 @@ class WikiBuilder:
             self._extract_facts(facts, original_sid)
 
         self._store.record_session_state(session_id, source_message_count, quality)
+
+        # Mark dirty topics for incremental topic aggregation
+        self._mark_topics_dirty(topics, slug)
+
         logger.info("hermes-wiki: %s (q=%d, topics=%s, facts=%d)", slug, quality, topics, len(facts))
+
+    # -- Topic dirty marker ------------------------------------------------
+
+    def _mark_topics_dirty(self, topics: list, wiki_page_slug: str) -> None:
+        """Mark topics as dirty after a wiki page is written.
+
+        Lazy-initializes TopicStore on first call. Failures are non-fatal
+        (dirty marker is a soft signal, not a correctness requirement).
+        """
+        if not topics:
+            return
+        if self._topic_store is None:
+            try:
+                from topic.topic_store import TopicStore
+                self._topic_store = TopicStore()
+            except Exception as e:
+                logger.debug("hermes-wiki: TopicStore init failed, skipping dirty marker: %s", e)
+                return
+        for topic_slug in topics:
+            if not topic_slug or not isinstance(topic_slug, str):
+                continue
+            topic_slug = topic_slug.strip().lower().replace(" ", "-")
+            if len(topic_slug) < 2:
+                continue
+            try:
+                self._topic_store.mark_dirty(topic_slug, wiki_page_slug)
+                logger.debug("hermes-wiki: marked %s dirty (page %s)", topic_slug, wiki_page_slug)
+            except Exception as e:
+                logger.debug("hermes-wiki: mark_dirty failed for %s: %s", topic_slug, e)
 
     # -- Fact extraction to holographic memory ----------------------------
 
