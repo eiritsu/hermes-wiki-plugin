@@ -764,11 +764,6 @@ export default {
       data: { codicon: 'book', label: 'Wiki', path: '/wiki' }
     })
     ctx.register({
-      id: 'wiki-topics-nav',
-      area: SIDEBAR_NAV_AREA,
-      data: { codicon: 'library', label: 'Topics', path: '/wiki/topics' }
-    })
-    ctx.register({
       id: 'wiki-page',
       area: ROUTES_AREA,
       data: { path: '/wiki' },
