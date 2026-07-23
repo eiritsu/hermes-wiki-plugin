@@ -74,7 +74,7 @@ Gespräch mit Hermes
 
 - **7-Sprach-i18n**: en/zh/ja/ko/de/fr/es — LLM erkennt die Gesprächssprache und generiert Wiki-Seiten in derselben Sprache
 - **Qualitätsbewertung**: 1-5 Skala (5=tief+bedeutend, 1=Rauschen)
-- **Topic-Klassifizierung**: Automatische Topic-Erkennung und aggregierte Seiten
+- **Topic-Klassifizierung + Aggregation**：Automatische Topic-Erkennung, Neuaufbau der Topic-Seiten alle 2 Stunden aus Sitzungsseiten
 - **Entity-Extraktion**: Identifizierung wichtiger Entitäten aus Gesprächen
 - **SQLite 3.31+ kompatibel**: Python 3.9+ (kein RETURNING)
 

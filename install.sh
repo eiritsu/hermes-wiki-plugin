@@ -10,7 +10,7 @@ DESKTOP_SRC="$(cd "$(dirname "$0")/desktop" && pwd)"
 PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/gateway-rpc.patch"
 
 BACKEND_DST="$HERMES_HOME/plugins/hermes_wiki"
-DESKTOP_DST="$HERMES_HOME/desktop-plugins/wiki"
+DESKTOP_DST="$HERMES_HOME/desktop-plugins/hermes-wiki"
 
 echo "Installing hermes-wiki plugin..."
 echo ""

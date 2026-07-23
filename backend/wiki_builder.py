@@ -61,18 +61,14 @@ class WikiBuilder:
         self._cleanup()
 
     def _cleanup(self) -> None:
-        """Remove low-quality pages, topic pages, and stale queue entries."""
+        """Remove low-quality pages and stale queue entries."""
         try:
             with self._store._lock:
                 # 1. Delete quality < 4 session pages
                 self._store._conn.execute(
                     "DELETE FROM hermes_wiki_pages WHERE quality < 4 AND page_type = 'session'"
                 )
-                # 2. Delete all topic pages (not needed)
-                self._store._conn.execute(
-                    "DELETE FROM hermes_wiki_pages WHERE page_type = 'topic'"
-                )
-                # 3. Clean up done/failed queue entries
+                # 2. Clean up done/failed queue entries
                 self._store._conn.execute(
                     "DELETE FROM hermes_wiki_pending_queue WHERE status IN ('done', 'failed')"
                 )
@@ -191,6 +187,192 @@ class WikiBuilder:
                 logger.debug("hermes-wiki: fact #%d: %s...", fact_id, content[:50])
             except Exception as e:
                 logger.debug("hermes-wiki: fact extraction failed: %s", e)
+
+    # -- Topic page aggregation -------------------------------------------
+
+    def _update_topic_pages(self, topics: list, analysis: dict) -> None:
+        """Create or update topic aggregation pages for the given topics."""
+        session_meta = {
+            "title": analysis.get("title", ""),
+            "date": analysis.get("date", ""),
+            "summary": (analysis.get("result") or analysis.get("background") or "")[:200],
+            "decisions": analysis.get("decisions", []),
+            "entities": analysis.get("entities", []),
+            "quality": analysis.get("quality", 0),
+        }
+        for topic_slug in topics:
+            if not topic_slug or not isinstance(topic_slug, str):
+                continue
+            topic_slug = topic_slug.strip().lower().replace(" ", "-")
+            if len(topic_slug) < 2:
+                continue
+            try:
+                self._update_single_topic(topic_slug, session_meta)
+            except Exception as e:
+                logger.debug("hermes-wiki: topic update failed for %s: %s", topic_slug, e)
+
+    def _update_single_topic(self, topic_slug: str, session_meta: dict) -> None:
+        """Update a single topic page — append session to timeline."""
+        existing = self._store.get_topic_page(topic_slug)
+        title = topic_slug.replace("-", " ").title()
+
+        if existing:
+            # Parse existing content and append new session
+            content = existing.get("full_content", "")
+            count = (existing.get("message_count") or 0) + 1
+            # Append to timeline section
+            date = session_meta.get("date", "")
+            stitle = session_meta.get("title", "")
+            summary = session_meta.get("summary", "")
+            new_entry = f"- [[{date}_{stitle}]] — {summary}"
+            if "## Timeline" in content:
+                content = content.replace("## Timeline\n", f"## Timeline\n{new_entry}\n", 1)
+            else:
+                content += f"\n## Timeline\n{new_entry}\n"
+            # Update overview with count
+            overview_line = f"包含 {count} 个相关会话的讨论记录。"
+            if "## Overview" in content:
+                import re
+                content = re.sub(
+                    r"(## Overview\n).*?(?=\n## |\Z)",
+                    f"\\1{overview_line}\n",
+                    content, count=1, flags=re.DOTALL,
+                )
+            self._store.upsert_topic_page(
+                slug=topic_slug, title=title, full_content=content,
+                session_count=count,
+            )
+            logger.debug("hermes-wiki: topic %s updated (%d sessions)", topic_slug, count)
+        else:
+            # Create new topic page
+            date = session_meta.get("date", "")
+            stitle = session_meta.get("title", "")
+            summary = session_meta.get("summary", "")
+            entities = session_meta.get("entities", [])
+            content = f"""---
+page_type: topic
+topic: {topic_slug}
+updated: {date}
+---
+
+# {title}
+
+## Overview
+首个相关会话：{stitle}
+
+## Timeline
+- [[{date}_{stitle}]] — {summary}
+
+## Entities
+{chr(10).join(f'- {e}' for e in entities) if entities else '- (none yet)'}
+"""
+            self._store.upsert_topic_page(
+                slug=topic_slug, title=title, full_content=content,
+                session_count=1, entities=entities,
+            )
+            logger.debug("hermes-wiki: topic %s created", topic_slug)
+
+    def aggregate_topics(self) -> int:
+        """Rebuild topic aggregation pages from session pages.
+
+        Scans all session pages with quality >= 4 and non-empty topics,
+        groups by topic slug, and recreates topic pages. Independent of
+        session processing — runs on its own timer.
+        """
+        import json as _json
+
+        rows = self._store._conn.execute(
+            """SELECT slug, title, date, quality, summary, topics, entities
+               FROM hermes_wiki_pages
+               WHERE page_type = 'session' AND quality >= 4
+               ORDER BY date ASC""",
+        ).fetchall()
+
+        topic_sessions = {}  # topic_slug -> [session_meta, ...]
+        for row in rows:
+            topics_raw = row["topics"] or "[]"
+            try:
+                topic_list = _json.loads(topics_raw) if isinstance(topics_raw, str) else topics_raw
+            except (ValueError, TypeError):
+                topic_list = []
+            if not isinstance(topic_list, list):
+                continue
+            for t in topic_list:
+                if not t or not isinstance(t, str):
+                    continue
+                t = t.strip().lower().replace(" ", "-")
+                if len(t) < 2:
+                    continue
+                topic_sessions.setdefault(t, []).append({
+                    "title": row["title"] or row["slug"],
+                    "date": row["date"] or "",
+                    "summary": (row["summary"] or "")[:200],
+                    "quality": row["quality"] or 0,
+                    "entities": row["entities"] or "[]",
+                })
+
+        if not topic_sessions:
+            return 0
+
+        updated = 0
+        for topic_slug, sessions in topic_sessions.items():
+            if len(sessions) < 2:
+                continue  # Skip single-session topics — not meaningful aggregation
+            try:
+                self._rebuild_topic_page(topic_slug, sessions)
+                updated += 1
+            except Exception as e:
+                logger.debug("hermes-wiki: topic rebuild failed for %s: %s", topic_slug, e)
+
+        logger.info("hermes-wiki: aggregated %d topics from %d session pages", updated, len(rows))
+        return updated
+
+    def _rebuild_topic_page(self, topic_slug: str, sessions: list) -> None:
+        """Rebuild a single topic page from its session list."""
+        title = topic_slug.replace("-", " ").title()
+        count = len(sessions)
+
+        # Merge entities from all sessions
+        all_entities = set()
+        for s in sessions:
+            try:
+                import json as _json
+                ents = _json.loads(s["entities"]) if isinstance(s["entities"], str) else s["entities"]
+                if isinstance(ents, list):
+                    all_entities.update(str(e) for e in ents if e)
+            except Exception:
+                pass
+
+        # Build overview
+        overview = f"包含 {count} 个相关会话的讨论记录。" if count > 1 else f"首个相关会话：{sessions[0]['title']}"
+
+        # Build timeline
+        timeline_lines = []
+        for s in sessions:
+            timeline_lines.append(f"- [[{s['date']}_{s['title']}]] — {s['summary']}")
+
+        # Build markdown content
+        content = f"""---
+page_type: topic
+topic: {topic_slug}
+updated: {sessions[-1]['date'] if sessions else ''}
+---
+
+# {title}
+
+## Overview
+{overview}
+
+## Timeline
+{chr(10).join(timeline_lines)}
+
+## Entities
+{chr(10).join(f'- {e}' for e in sorted(all_entities)) if all_entities else '- (none yet)'}
+"""
+        self._store.upsert_topic_page(
+            slug=topic_slug, title=title, full_content=content,
+            session_count=count, entities=list(all_entities),
+        )
 
     # -- LLM call -----------------------------------------------------------
 

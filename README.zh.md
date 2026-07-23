@@ -44,7 +44,7 @@ cd /tmp/hermes-wiki-plugin
 bash install.sh
 ```
 
-安装脚本会将后端安装到 `~/.hermes/plugins/hermes_wiki/`，将 Desktop Wiki GUI 安装到 `~/.hermes/desktop-plugins/wiki/`。
+安装脚本会将后端安装到 `~/.hermes/plugins/hermes_wiki/`，将 Desktop Wiki GUI 安装到 `~/.hermes/desktop-plugins/hermes-wiki/`。
 
 编辑 `~/.hermes/config.yaml`，将 `hermes-wiki` 添加到插件列表：
 
@@ -73,6 +73,7 @@ plugins:
               → 写入结构化 wiki 页面到 SQLite（quality >= 4）
               → 提取可复用 facts 到 holographic memory（扩展模式下）
   → 每 1 小时 batch scan 兜底（补捞 hook 漏掉的会话）
+  → 每 2 小时 topic 聚合（从 session 页面重建主题页面）
 ```
 
 插件会在首次运行时自动在 `~/.hermes/memory_store.db` 中创建所需的 SQLite 表（`hermes_wiki_pages`、`hermes_wiki_pending_queue` 和 `hermes_wiki_session_state`）。无需手动建表。
@@ -160,7 +161,7 @@ sqlite3 ~/.hermes/memory_store.db \
 
 - **7 语言 i18n**：en/zh/ja/ko/de/fr/es — LLM 自动检测对话语言，wiki 页面用对应语言生成
 - **质量评分**：1-5 分制（5=深入且重要，1=噪音），低质量会话只做最小处理
-- **主题分类**：自动发现主题，维护主题聚合页面和会话时间线
+- **主题分类 + 聚合**：自动发现主题，每 2 小时从 session 页面重建主题聚合页面
 - **实体提取**：从对话中识别关键实体（人物、工具、系统）
 - **Fact 提取**：可复用知识（工具行为、配置坑、用户偏好）写入 holographic memory，可通过 `fact_store` 搜索
 - **双 Hook 触发**：`on_session_end` 处理会话关闭 + `on_session_reset` 处理话题切换，近实时生成 wiki
@@ -206,13 +207,13 @@ Container networking resolved, reverse proxy configured
 ```text
 hermes-wiki-plugin/
 ├── backend/
-│   ├── __init__.py          — 双模式入口、hooks、每 5 分钟增量扫描
+│   ├── __init__.py          — 双模式入口、hooks、5 分钟增量扫描 + 2 小时 topic 聚合定时器
 │   ├── wiki_store.py        — SQLite 队列、重试、session state、页面存储
 │   ├── wiki_builder.py      — LLM 分析与 wiki 页面生成
 │   ├── wiki_rpc.py          — Desktop GUI 的 Gateway RPC 方法
 │   ├── plugin.yaml          — 插件元数据
 │   └── prompts/default.md   — 分析提示词
-├── desktop/plugin.js         — Hermes Desktop Wiki 侧栏 GUI
+├── desktop/plugin.js         — Hermes Desktop Wiki 侧栏 GUI（双面板布局，运行时 CSS 注入兼容 Tailwind）
 └── install.sh                — 同时安装后端和 Desktop 组件
 ```
 
