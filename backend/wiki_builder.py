@@ -92,21 +92,27 @@ class WikiBuilder:
                 item = self._store.dequeue_pending()
                 if not item:
                     break
+                # sqlite Row with id field (queue row id)
+                queue_id = item["id"]
+                session_id = item["session_id"]
                 try:
                     messages = json.loads(item["messages_json"])
                     self._process_session(
-                        session_id=item["session_id"],
+                        session_id=session_id,
                         title=item.get("title", ""),
                         source=item.get("source", "queue"),
                         messages=messages,
                         source_message_count=item.get("message_count", len(messages)),
-                        original_sid=item["session_id"],
+                        original_sid=session_id,
                     )
-                    self._store.mark_done(item["session_id"])
+                    self._store.mark_done(queue_id)
                     processed += 1
                 except Exception as e:
-                    logger.error("hermes-wiki: session %s failed: %s", item["session_id"], e)
-                    self._store.mark_failed(item["session_id"], str(e))
+                    logger.error("hermes-wiki: session %s failed: %s", session_id, e)
+                    # Requeue for retry (topic-style infinite retry, no permanent fail).
+                    # Exponential backoff capped at 5 min; next batch_scan picks it up
+                    # once next_retry_at expires.
+                    self._store.retry_or_fail(queue_id, str(e))
         except Exception as e:
             logger.error("hermes-wiki: queue processing error: %s", e)
         if processed:
@@ -261,7 +267,7 @@ class WikiBuilder:
         raw = self._llm.send_request(
             system_prompt=self._prompt(),
             user_prompt=user_prompt,
-            max_tokens=2000,
+            max_tokens=3000,  # wiki pages can be ~1.5K tokens, leave headroom for JSON fields
             temperature=0.3,
         )
         if raw is None:

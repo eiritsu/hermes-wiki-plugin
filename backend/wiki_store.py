@@ -224,24 +224,29 @@ class WikiStore:
             self._conn.commit()
 
     def retry_or_fail(self, queue_id: int, error: str, max_attempts: int = 3) -> str:
-        """Retry transient failures with exponential backoff, then mark failed."""
+        """Requeue a failed session for retry.
+
+        Wiki uses topic-style infinite retry: failed sessions stay pending
+        forever (with exponential backoff) until the LLM call succeeds. No
+        permanent failure state — this matches topic_builder's "leave dirty
+        forever" semantics so transient LLM outages don't lose wiki work.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT attempts FROM hermes_wiki_pending_queue WHERE id = ?", (queue_id,)
             ).fetchone()
-            attempts = int(row[0] or 0) + 1 if row else max_attempts
-            status = "failed" if attempts >= max_attempts else "pending"
-            delay_seconds = min(300, 15 * (2 ** (attempts - 1)))
-            retry_at = None if status == "failed" else f"+{delay_seconds} seconds"
+            attempts = int(row[0] or 0) + 1 if row else 1
+            # Cap backoff at 5 minutes; never permanently fail
+            delay_seconds = min(300, 15 * (2 ** (min(attempts, 6) - 1)))
             self._conn.execute(
                 """UPDATE hermes_wiki_pending_queue
-                   SET status = ?, attempts = ?, last_error = ?, processing_started_at = NULL,
-                       next_retry_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END
+                   SET status = 'pending', attempts = ?, last_error = ?, processing_started_at = NULL,
+                       next_retry_at = datetime('now', ?)
                    WHERE id = ?""",
-                (status, attempts, error[:1000], retry_at, retry_at, queue_id),
+                (attempts, error[:1000], f"+{delay_seconds} seconds", queue_id),
             )
             self._conn.commit()
-            return status
+            return "pending"
 
     def recover_stale_processing(self, max_age_seconds: int = 900) -> int:
         """Requeue work left in processing by an interrupted worker."""
