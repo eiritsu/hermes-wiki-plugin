@@ -74,7 +74,7 @@ Conversación con Hermes
 
 - **i18n 7 idiomas**: en/zh/ja/ko/de/fr/es — el LLM detecta el idioma y genera páginas wiki en el mismo idioma
 - **Puntuación de calidad**: escala 1-5 (5=profundo+importante, 1=ruido)
-- **Clasificación de temas**: descubrimiento automático y páginas agregadas
+- **Clasificación de temas + Agregación**：descubrimiento automático, reconstrucción de páginas de temas cada 2 horas
 - **Extracción de entidades**: identificación de entidades clave
 - **Compatible SQLite 3.31+**: Python 3.9+ (sin RETURNING)
 

@@ -273,6 +273,11 @@ def wiki_batch_process(rid, params):
 def wiki_list_topics(rid, params):
     """Return all topic pages with their associated session pages."""
     try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        plugins_dir = str(_Path(__file__).resolve().parent.parent)
+        if plugins_dir not in _sys.path:
+            _sys.path.insert(0, plugins_dir)
         from hermes_constants import get_hermes_home
         from hermes_wiki.wiki_store import WikiStore
 
@@ -299,6 +304,11 @@ def wiki_get_topic(rid, params):
             return _err(rid, -32602, "Missing 'slug' parameter")
 
         from hermes_constants import get_hermes_home
+        import sys as _sys
+        from pathlib import Path as _Path
+        plugins_dir = str(_Path(__file__).resolve().parent.parent)
+        if plugins_dir not in _sys.path:
+            _sys.path.insert(0, plugins_dir)
         from hermes_wiki.wiki_store import WikiStore
 
         ws = WikiStore()

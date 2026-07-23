@@ -44,7 +44,7 @@ cd /tmp/hermes-wiki-plugin
 bash install.sh
 ```
 
-The installer places the backend in `~/.hermes/plugins/hermes_wiki/` and the Desktop GUI plugin in `~/.hermes/desktop-plugins/wiki/`.
+The installer places the backend in `~/.hermes/plugins/hermes_wiki/` and the Desktop GUI plugin in `~/.hermes/desktop-plugins/hermes-wiki/`.
 
 Then edit `~/.hermes/config.yaml` — add `hermes-wiki` to the plugins list:
 
@@ -75,6 +75,7 @@ You chat with Hermes
               → Writes structured wiki page to SQLite (quality >= 4)
               → Extracts reusable facts into holographic memory (if active)
   → 1-hour batch scan (catches anything the hooks missed)
+  → 2-hour topic aggregation (rebuilds topic pages from session pages)
 ```
 
 The plugin auto-creates its SQLite tables (`hermes_wiki_pages`, `hermes_wiki_pending_queue`, and `hermes_wiki_session_state`) in `~/.hermes/memory_store.db` on first run. No manual database setup needed.
@@ -162,7 +163,7 @@ sqlite3 ~/.hermes/memory_store.db \
 
 - **7-Language i18n**: en/zh/ja/ko/de/fr/es — LLM detects session language and generates wiki pages in that language
 - **Quality Scoring**: 1-5 scale (5=deep+important, 1=noise), low-quality sessions get minimal processing
-- **Topic Classification**: Auto-discovers topics, maintains topic aggregate pages with session timeline
+- **Topic Classification + Aggregation**: Auto-discovers topics, maintains topic aggregate pages rebuilt every 2 hours from session pages
 - **Entity Extraction**: Identifies key entities (people, tools, systems) from conversations
 - **Fact Extraction**: Reusable knowledge (tool quirks, gotchas, preferences) written to holographic memory — searchable via `fact_store` alongside existing facts
 - **Dual Hook Triggers**: `on_session_end` for session close + `on_session_reset` for topic switch — near-instant wiki generation
@@ -208,13 +209,13 @@ Container networking resolved, reverse proxy configured
 ```text
 hermes-wiki-plugin/
 ├── backend/
-│   ├── __init__.py          — dual-mode entry point, hooks, 5-minute incremental scan
+│   ├── __init__.py          — dual-mode entry point, hooks, 5-min scan + 2h topic aggregation timer
 │   ├── wiki_store.py        — SQLite queue, retry, session state, and page storage
 │   ├── wiki_builder.py      — LLM analysis and wiki page generation
 │   ├── wiki_rpc.py          — Gateway RPC methods for the Desktop GUI
 │   ├── plugin.yaml          — plugin metadata
 │   └── prompts/default.md   — analysis prompt
-├── desktop/plugin.js         — Hermes Desktop Wiki sidebar GUI
+├── desktop/plugin.js         — Hermes Desktop Wiki sidebar GUI (dual-panel, runtime CSS injection for Tailwind compatibility)
 └── install.sh                — installs backend and Desktop components
 ```
 

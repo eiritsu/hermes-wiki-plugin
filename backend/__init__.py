@@ -26,6 +26,8 @@ _wiki_thread = None
 _wiki_thread_lock = threading.Lock()
 _scan_timer = None
 _SCAN_INTERVAL = 3600  # 1 hour
+_TOPIC_AGG_INTERVAL = 7200  # 2 hours
+_topic_agg_timer = None
 
 WIKI_SEARCH_SCHEMA = {
     "name": "wiki_search",
@@ -248,6 +250,31 @@ def _start_scan_timer() -> None:
     _schedule_timer()
 
 
+def _start_topic_timer() -> None:
+    """Start topic aggregation timer (every 2 hours, independent of session scan)."""
+    global _topic_agg_timer
+    import time
+
+    def _tick():
+        try:
+            if _wiki_builder:
+                _wiki_builder.aggregate_topics()
+        except Exception as e:
+            logger.debug("hermes-wiki: topic aggregation failed: %s", e)
+        _schedule_topic_timer()
+
+    def _schedule_topic_timer():
+        global _topic_agg_timer
+        _topic_agg_timer = threading.Timer(_TOPIC_AGG_INTERVAL, _tick)
+        _topic_agg_timer.daemon = True
+        _topic_agg_timer.start()
+
+    # Run first aggregation after a short delay (let session processing finish first)
+    _topic_agg_timer = threading.Timer(60, _tick)
+    _topic_agg_timer.daemon = True
+    _topic_agg_timer.start()
+
+
 # ── Background worker ──────────────────────────────────────────────────
 
 def _schedule_worker() -> None:
@@ -402,6 +429,7 @@ def register(ctx) -> None:
         from .wiki_rpc import (
             wiki_list, wiki_get, wiki_create,
             wiki_update, wiki_delete, wiki_stats, wiki_batch_process,
+            wiki_list_topics, wiki_get_topic,
         )
         ctx.register_rpc("wiki.list", wiki_list)
         ctx.register_rpc("wiki.get", wiki_get)
@@ -410,8 +438,12 @@ def register(ctx) -> None:
         ctx.register_rpc("wiki.delete", wiki_delete)
         ctx.register_rpc("wiki.stats", wiki_stats)
         ctx.register_rpc("wiki.batch_process", wiki_batch_process)
+        ctx.register_rpc("wiki.list_topics", wiki_list_topics)
+        ctx.register_rpc("wiki.get_topic", wiki_get_topic)
     else:
         logger.warning("hermes-wiki: plugin RPC unavailable; Desktop GUI RPC disabled")
 
     # Start periodic scan timer (5 min interval + immediate first run)
     _start_scan_timer()
+    # Start independent topic aggregation timer (2 hour interval)
+    _start_topic_timer()
