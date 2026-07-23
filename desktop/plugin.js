@@ -6,7 +6,7 @@
  * wiki.update, wiki.delete, wiki.stats, wiki.batch_process.
  */
 
-import { cn, haptic, host, Tip, useValue, Codicon, Badge, Button, SearchField, ScrollArea, EmptyState, Separator, Tooltip, ConfirmDialog } from '@hermes/plugin-sdk'
+import { cn, haptic, host, Tip, useValue, Codicon, Badge, Button, ScrollArea, EmptyState, Separator, Tooltip, ConfirmDialog } from '@hermes/plugin-sdk'
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime'
 import { useState, useEffect, useCallback } from 'react'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@hermes/plugin-sdk'
