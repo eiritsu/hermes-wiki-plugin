@@ -6,7 +6,7 @@
  * wiki.update, wiki.delete, wiki.stats, wiki.batch_process.
  */
 
-import { cn, haptic, host, Tip, useValue, Codicon, Badge, Button, ScrollArea, EmptyState, Separator, Tooltip, ConfirmDialog } from '@hermes/plugin-sdk'
+import { cn, haptic, host, Tip, useValue, Codicon, Badge, Button, ScrollArea, EmptyState, Separator, Tooltip, ConfirmDialog, Checkbox } from '@hermes/plugin-sdk'
 import { jsx, jsxs, Fragment } from 'react/jsx-runtime'
 import { useState, useEffect, useCallback } from 'react'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@hermes/plugin-sdk'
@@ -109,43 +109,39 @@ function WikiListItem({ page, selected, selectable, checked, onCheck, onClick })
   }
   return jsxs('div', {
     className: cn(
-      'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7 transition-colors',
+      'flex items-center gap-0 rounded-md min-h-7 transition-colors',
       selectable ? 'cursor-pointer' : 'hover:bg-(--chrome-action-hover)',
       !selectable && selected && 'bg-(--chrome-action-hover)'
     ),
     onClick: selectable ? () => onCheck(page.slug, !checked) : undefined,
     children: [
-      // Optional checkbox in select mode
-      selectable && jsx('input', {
-        type: 'checkbox',
-        checked: !!checked,
-        onChange: e => onCheck(page.slug, e.target.checked),
-        onClick: e => e.stopPropagation(),
-        className: 'ml-2 shrink-0'
+      // Checkbox: fixed width slot, always reserves space in select mode
+      jsx('div', { className: cn('flex w-5 shrink-0 items-center justify-center', !selectable && 'invisible'),
+        children: jsx(Checkbox, {
+          checked: !!checked,
+          onCheckedChange: v => onCheck(page.slug, v),
+          onClick: e => e.stopPropagation(),
+          className: 'size-3.5'
+        })
       }),
-      jsx('button', {
-        className: cn('flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pr-1',
-          selectable ? 'pl-1' : 'pl-7'),
-        onClick: handleRowClick,
-        style: { width: '100%' },
-        children: [
-          jsx('span', {
-            className: 'grid size-3.5 shrink-0 place-items-center',
-            children: jsx('span', {
-              className: 'size-1.5 rounded-full',
-              style: { backgroundColor: qualityDotColor(page.quality) }
-            })
-          }),
-          jsx('span', {
-            className: cn('min-w-0 flex-1 truncate text-sm leading-none',
-              selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
-            children: page.title || page.slug
-          }),
-          jsx('span', {
-            className: 'shrink-0 text-xs text-(--ui-text-quaternary)',
-            children: page.date || ''
-          })
-        ]
+      // Quality dot
+      jsx('span', {
+        className: 'grid size-3.5 shrink-0 place-items-center',
+        children: jsx('span', {
+          className: 'size-1.5 rounded-full',
+          style: { backgroundColor: qualityDotColor(page.quality) }
+        })
+      }),
+      // Title
+      jsx('span', {
+        className: cn('min-w-0 flex-1 truncate text-sm leading-none',
+          selected ? 'text-foreground' : 'text-(--ui-text-secondary)'),
+        children: page.title || page.slug
+      }),
+      // Date
+      jsx('span', {
+        className: 'shrink-0 text-xs text-(--ui-text-quaternary)',
+        children: page.date || ''
       })
     ]
   })
@@ -512,55 +508,63 @@ function TopicGroup({ topic, expanded, selectable, checked, onCheck, onToggle, o
   return jsxs('div', { children: [
     // ── Topic row ──
     jsxs('div', {
-      className: cn('grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7',
+      className: cn('flex items-center gap-0 rounded-md min-h-7',
         selectable ? 'cursor-pointer' : 'hover:bg-(--chrome-action-hover)'),
       onClick: selectable ? () => onCheck(topic.slug, !topicSelected) : undefined,
       children: [
-        // Optional checkbox in select mode
-        selectable && jsx('input', {
-          type: 'checkbox',
-          checked: topicSelected,
-          onChange: e => onCheck(topic.slug, e.target.checked),
-          onClick: e => e.stopPropagation(),
-          className: 'ml-3 shrink-0 self-center'
+        // Checkbox: fixed width slot, always reserves space in select mode
+        jsx('div', { className: cn('flex w-5 shrink-0 items-center justify-center', !selectable && 'invisible'),
+          children: jsx(Checkbox, {
+            checked: topicSelected,
+            onCheckedChange: v => onCheck(topic.slug, v),
+            onClick: e => e.stopPropagation(),
+            className: 'size-3.5'
+          })
         }),
-        jsx('button', {
-          className: cn('flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pr-1',
-            selectable ? 'pl-1' : 'pl-4'),
-          onClick: selectable ? undefined : () => onTopicClick(topic),
-          style: { width: '100%' },
-          children: [
-            jsx(Codicon, {
-              name: expanded ? 'chevron-down' : 'chevron-right',
-              className: 'size-3 shrink-0 text-(--ui-text-quaternary) cursor-pointer',
-              onClick: e => { e.stopPropagation(); onToggle(topic.slug) }
-            }),
-            jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 opacity-72', style: { color: '#dcb67a' } }),
-            jsx('span', { className: 'min-w-0 flex-1 truncate text-sm leading-none text-(--ui-text-secondary)', children: topic.title || topic.slug }),
-            jsx('span', { className: 'shrink-0 text-xs font-medium text-(--ui-text-quaternary)', children: sessions.length })
-          ]
-        })
+        // Chevron
+        jsx(Codicon, {
+          name: expanded ? 'chevron-down' : 'chevron-right',
+          className: 'size-3 shrink-0 text-(--ui-text-quaternary) cursor-pointer',
+          onClick: e => { e.stopPropagation(); onToggle(topic.slug) }
+        }),
+        // Folder icon
+        jsx(Codicon, { name: 'folder', className: 'size-3.5 shrink-0 opacity-72', style: { color: '#dcb67a' } }),
+        // Title
+        jsx('span', {
+          className: 'min-w-0 flex-1 truncate text-sm leading-none text-(--ui-text-secondary)',
+          onClick: !selectable ? () => onTopicClick(topic) : undefined,
+          children: topic.title || topic.slug
+        }),
+        // Count badge
+        jsx('span', { className: 'shrink-0 text-xs font-medium text-(--ui-text-quaternary)', children: sessions.length })
       ]
     }),
     // ── Child sessions (always clickable, no checkbox — sessions are read-only when topic selected) ──
     expanded && sessions.map((s, i) =>
       jsxs('div', {
-        className: 'grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md min-h-7 hover:bg-(--chrome-action-hover)',
-        children: jsxs('button', {
-          className: 'flex h-full min-w-0 items-center gap-1.5 self-stretch py-0.5 pl-8 pr-1',
-          onClick: () => { haptic('tap'); onSessionClick(s.slug) },
-          children: [
-            jsx('span', {
-              className: 'grid size-3.5 shrink-0 place-items-center',
-              children: jsx('span', {
-                className: 'size-1.5 rounded-full',
-                style: { backgroundColor: qualityDotColor(s.quality) }
-              })
-            }),
-            jsx('span', { className: 'min-w-0 flex-1 truncate text-sm leading-none text-(--ui-text-secondary)', children: s.title || s.slug }),
-            jsx('span', { className: 'shrink-0 text-xs text-(--ui-text-quaternary)', children: s.date || '' })
-          ]
-        })
+        className: 'flex items-center gap-0 rounded-md min-h-7 hover:bg-(--chrome-action-hover)',
+        children: [
+          // Indent spacer (matches checkbox slot width)
+          jsx('div', { className: 'w-5 shrink-0' }),
+          // Chevron spacer
+          jsx('div', { className: 'w-3 shrink-0' }),
+          // Quality dot
+          jsx('span', {
+            className: 'grid size-3.5 shrink-0 place-items-center',
+            children: jsx('span', {
+              className: 'size-1.5 rounded-full',
+              style: { backgroundColor: qualityDotColor(s.quality) }
+            })
+          }),
+          // Title
+          jsx('button', {
+            className: 'min-w-0 flex-1 truncate text-sm leading-none text-left text-(--ui-text-secondary)',
+            onClick: () => { haptic('tap'); onSessionClick(s.slug) },
+            children: s.title || s.slug
+          }),
+          // Date
+          jsx('span', { className: 'shrink-0 text-xs text-(--ui-text-quaternary)', children: s.date || '' })
+        ]
       }, s.slug || i)
     )
   ]})
