@@ -399,6 +399,10 @@ def register(ctx) -> None:
     # Register Gateway RPC methods for Desktop Plugin GUI when the host supports it.
     # Older/local Hermes builds without plugin RPC must still load the backend timer.
     if hasattr(ctx, "register_rpc"):
+        # The RPC/topic modules use absolute imports within the backend package.
+        # Ensure the backend directory is importable before loading handlers.
+        from .rpc_utils import setup_plugin_path
+        setup_plugin_path()
         from .wiki_rpc import (
             wiki_list, wiki_get, wiki_create,
             wiki_update, wiki_delete, wiki_stats, wiki_batch_process,

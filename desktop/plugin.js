@@ -475,9 +475,12 @@ function TopicDetail({ topic, onBack, onSessionClick }) {
           // Entities
           entityList.length > 0 && jsxs('div', { children: [
             jsx('h3', { className: 'text-xs font-medium text-(--ui-text-quaternary) uppercase tracking-wide mb-1.5', children: 'Entities' }),
-            jsx('div', { className: 'flex flex-wrap gap-1.5', children: entityList.map((entity, i) =>
-              jsx('span', { key: i, className: 'rounded-sm bg-(--ui-bg-secondary) px-1.5 py-0.5 text-xs text-(--ui-text-tertiary)', children: entity })
-            )})
+            jsx('div', { className: 'flex flex-wrap gap-1.5', children: entityList.map((entity, i) => {
+              const entityText = typeof entity === 'string'
+                ? entity
+                : (entity?.name || entity?.title || entity?.label || JSON.stringify(entity))
+              return jsx('span', { key: i, className: 'rounded-sm bg-(--ui-bg-secondary) px-1.5 py-0.5 text-xs text-(--ui-text-tertiary)', children: entityText })
+            })})
           ]}),
           // Sessions list
           sessions.length > 0 && jsxs('div', { children: [
