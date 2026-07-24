@@ -330,3 +330,18 @@ class TopicStore:
             (topic_slug,)
         )
         conn.commit()
+
+    def reconcile_topics(self, active_slugs: set[str], min_sessions: int = 2) -> int:
+        """Delete derived topics that are stale or below the session threshold."""
+        conn = self._connect()
+        rows = conn.execute("SELECT slug, session_count FROM hermes_wiki_topics").fetchall()
+        removed = 0
+        for row in rows:
+            if row["slug"] not in active_slugs or int(row["session_count"] or 0) < min_sessions:
+                conn.execute("DELETE FROM hermes_wiki_topics WHERE slug = ?", (row["slug"],))
+                conn.execute("DELETE FROM hermes_wiki_topic_dirty WHERE topic_slug = ?", (row["slug"],))
+                removed += 1
+        conn.commit()
+        if removed:
+            logger.info("hermes-wiki: removed %d stale topic(s)", removed)
+        return removed

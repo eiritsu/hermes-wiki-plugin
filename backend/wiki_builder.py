@@ -15,6 +15,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from topic.topic_builder import normalize_topic_slug
+
 logger = logging.getLogger(__name__)
 
 _MAX_MSG_LEN = 3000
@@ -223,7 +225,7 @@ class WikiBuilder:
         for topic_slug in topics:
             if not topic_slug or not isinstance(topic_slug, str):
                 continue
-            topic_slug = topic_slug.strip().lower().replace(" ", "-")
+            topic_slug = normalize_topic_slug(topic_slug)
             if len(topic_slug) < 2:
                 continue
             try:

@@ -19,7 +19,9 @@ Return strict JSON only:
   "timeline": [
     {"date": "YYYY-MM-DD", "title": "Session title", "slug": "session_slug_here"}
   ],
-  "entities": ["Entity1", "Entity2"],
+  "entities": [
+    {"name": "Entity1", "type": "component", "description": "Why it matters to this topic"}
+  ],
   "full_content": "Complete topic wiki page (see format below)"
 }
 ```
@@ -92,4 +94,4 @@ updated: YYYY-MM-DD
 
 7. **Skip integration if not meaningful**: if sessions are too sparse (only 2 sessions with no overlapping decisions/patterns), still produce a topic page but keep it minimal — just Overview + Sessions list. Do NOT fabricate cross-session insights.
 
-8. **Entity deduplication**: merge entities that refer to the same thing (e.g. "Docker" and "Docker Compose" → ["Docker", "Docker Compose"] only if both are used distinctly; "PostgreSQL" and "postgres" → ["PostgreSQL"]).
+8. **Entity deduplication**: merge entities that refer to the same thing. Every entity MUST be an object with exactly `name`, `type`, and `description` fields. Never return a category-keyed object such as `{people: [...], technologies: [...]}`.

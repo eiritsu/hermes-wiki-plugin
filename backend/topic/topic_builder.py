@@ -35,6 +35,48 @@ _MAX_SESSIONS_PER_TOPIC = 8
 # If total input exceeds this, skip LLM and use template fallback.
 _MAX_TOTAL_INPUT_CHARS = 10_000
 
+_TOPIC_ALIASES = {
+    "lottery-prediction": "algorithm-optimization",
+    "lottery-analysis": "algorithm-optimization",
+    "ssq-prediction": "algorithm-optimization",
+    "data-analysis": "algorithm-optimization",
+    "resume-editing": "resume-optimization",
+}
+
+
+def normalize_topic_slug(value: str) -> str:
+    """Return a canonical slug for grouping and storage."""
+    slug = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", (value or "").strip().lower()).strip("-")
+    return _TOPIC_ALIASES.get(slug, slug)
+
+
+def normalize_entities(value) -> list[dict]:
+    """Normalize entity output to [{name, type, description}]."""
+    result, seen = [], set()
+
+    def add(item, kind="entity"):
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("title") or item.get("label")
+            kind = item.get("type") or item.get("kind") or kind
+            description = item.get("description") or item.get("role") or ""
+        else:
+            name, description = item, ""
+        name = str(name or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            result.append({"name": name, "type": str(kind), "description": str(description)})
+
+    if isinstance(value, dict):
+        for kind, items in value.items():
+            for item in items if isinstance(items, list) else [items]:
+                add(item, kind)
+    elif isinstance(value, list):
+        for item in value:
+            add(item)
+    else:
+        add(value)
+    return result
+
 
 class TopicBuilder:
     """Aggregates session wiki pages into topic pages via LLM integration."""
@@ -74,6 +116,17 @@ class TopicBuilder:
         Returns number of topics updated.
         """
         dirty_topics = self._store.get_dirty_topics()
+
+        # Reconcile the derived table even when no LLM work is pending.
+        # Otherwise deleted/renamed session topics remain visible forever.
+        all_sessions = self._store.list_session_full_content()
+        active_slugs = {
+            normalize_topic_slug(t)
+            for s in all_sessions
+            for t in s.get("topics", [])
+            if isinstance(t, str) and len(normalize_topic_slug(t)) >= 2
+        }
+        self._store.reconcile_topics(active_slugs, min_sessions=2)
         if not dirty_topics:
             logger.debug("hermes-wiki: no dirty topics, skipping aggregation")
             return 0
@@ -81,7 +134,8 @@ class TopicBuilder:
         # Build a lookup: topic_slug -> list of changed page slugs
         dirty_map: dict[str, list[str]] = {}
         for d in dirty_topics:
-            dirty_map[d["topic_slug"]] = d.get("changed_pages", [])
+            canonical = normalize_topic_slug(d["topic_slug"])
+            dirty_map.setdefault(canonical, []).extend(d.get("changed_pages", []))
 
         # Read all wiki pages once (batch)
         all_sessions = self._store.list_session_full_content()
@@ -89,20 +143,20 @@ class TopicBuilder:
             return 0
 
         # Group all sessions by topic (for later lookup)
-        topic_sessions: dict[str, list[dict]] = defaultdict(list)
+        topic_sessions: dict[str, dict[str, dict]] = defaultdict(dict)
         for s in all_sessions:
             for t in s.get("topics", []):
                 if not t or not isinstance(t, str):
                     continue
-                slug = t.strip().lower().replace(" ", "-")
+                slug = normalize_topic_slug(t)
                 if len(slug) < 2:
                     continue
-                topic_sessions[slug].append(s)
+                topic_sessions[slug][s["slug"]] = s
 
         # Process only dirty topics
         updated = 0
         for topic_slug in dirty_map:
-            t_sessions = topic_sessions.get(topic_slug, [])
+            t_sessions = list(topic_sessions.get(topic_slug, {}).values())
             if len(t_sessions) < 2:
                 # Not enough sessions — clear dirty without aggregation
                 self._store.clear_dirty(topic_slug)
@@ -119,6 +173,7 @@ class TopicBuilder:
                 # Leave dirty — retry next cycle
 
         logger.info("hermes-wiki: aggregated %d/%d dirty topics", updated, len(dirty_map))
+        self._store.reconcile_topics(set(topic_sessions), min_sessions=2)
         return updated
 
     def _aggregate_topic(self, topic_slug: str, sessions: list[dict]) -> bool:
@@ -175,7 +230,7 @@ class TopicBuilder:
         full_content = self._inject_signature(full_content, signature)
 
         title = analysis.get("title") or topic_slug.replace("-", " ").title()
-        entities = analysis.get("entities", [])
+        entities = normalize_entities(analysis.get("entities", []))
         language = analysis.get("language", "en")
         session_slugs = [s["slug"] for s in sessions]
 
@@ -310,8 +365,9 @@ class TopicBuilder:
         all_entities = set()
         for s in sessions:
             for e in s.get("entities", []):
-                if e:
-                    all_entities.add(str(e))
+                normalized = normalize_entities([e])
+                if normalized:
+                    all_entities.add(normalized[0]["name"])
 
         # Build timeline
         timeline_lines = []
@@ -343,7 +399,7 @@ updated: {sessions[-1].get('date', '') if sessions else ''}
             slug=topic_slug,
             title=title,
             full_content=full_content,
-            entities=sorted(all_entities),
+            entities=normalize_entities(sorted(all_entities)),
             session_count=count,
             sessions=[s.get("slug", "") for s in sessions],
             language="en",
